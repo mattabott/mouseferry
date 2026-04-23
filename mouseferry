@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""
+mouseferry — seamless mouse sharing between a Linux PC and an Android device via scrcpy.
+
+Move the mouse to the configured screen edge → the cursor is ferried to the
+Android device (a scrcpy session is launched on demand). Sweep the mouse back
+toward the PC → scrcpy is killed and the cursor returns to the desktop,
+leaving no phantom pointer behind. evdev is used to detect the return sweep
+even while SDL has grabbed the pointer.
+
+Config:  ~/.config/mouseferry/config.ini
+Project: https://github.com/mattabott/mouseferry
+Author:  Matteo Cozza <mattabott@gmail.com>
+License: PolyForm Noncommercial 1.0.0
+"""
+
+import configparser
+import subprocess
+import signal
+import shutil
+import sys
+import time
+import threading
+import os
+import re
+import select
+
+APP_NAME = "mouseferry"
+CONFIG_DIR = os.path.expanduser(f"~/.config/{APP_NAME}")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.ini")
+LOG_FILE = os.path.join(CONFIG_DIR, "last.log")
+
+DEFAULT_CONFIG = """\
+# mouseferry — configuration
+
+[general]
+# Screen edge that triggers the switch to Android: left | right
+edge = left
+
+# Pixels from the edge required to trigger the switch
+threshold = 2
+
+# Mouse polling interval in ms
+poll_ms = 50
+
+# Return sensitivity: how strongly you have to sweep the mouse back toward
+# the PC to return control. Higher values = a more decisive gesture is
+# required. Recommended: 1500-3000.
+return_sensitivity = 2000
+
+[scrcpy]
+# Android device serial (empty = auto-detect via adb)
+serial =
+
+# Extra flags passed to scrcpy (space-separated)
+extra_args =
+"""
+
+
+def run(*cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+def log(msg):
+    ts = time.strftime("%H:%M:%S")
+    with open(LOG_FILE, "a") as f:
+        f.write(f"{ts} {msg}\n")
+
+
+# -- X11 helpers -------------------------------------------------------------
+
+def get_screen_geometry():
+    out = run("xrandr")
+    tw, th = 0, 0
+    for line in out.stdout.splitlines():
+        if " connected" in line:
+            m = re.search(r"(\d+)x(\d+)\+(\d+)\+(\d+)", line)
+            if m:
+                w, h, x, y = int(m[1]), int(m[2]), int(m[3]), int(m[4])
+                tw, th = max(tw, x + w), max(th, y + h)
+    return (tw, th) if tw else (1920, 1080)
+
+def get_mouse_pos():
+    out = run("xdotool", "getmouselocation")
+    parts = dict(p.split(":") for p in out.stdout.strip().split())
+    return int(parts["x"]), int(parts["y"])
+
+def find_scrcpy_window():
+    out = run("xdotool", "search", "--name", APP_NAME)
+    wids = out.stdout.strip().split()
+    return wids[0] if wids else None
+
+def warp_mouse(x, y):
+    run("xdotool", "mousemove", str(x), str(y))
+
+def get_active_window():
+    out = run("xdotool", "getactivewindow")
+    return out.stdout.strip() or None
+
+def get_android_screen(serial=""):
+    s = ["-s", serial] if serial else []
+    out = run("adb", *s, "shell", "wm", "size")
+    for line in reversed(out.stdout.strip().splitlines()):
+        m = re.search(r"(\d+)x(\d+)", line)
+        if m:
+            return int(m[1]), int(m[2])
+    return 1920, 1080
+
+
+# -- evdev -------------------------------------------------------------------
+
+def find_mouse_device():
+    """Find the physical mouse via evdev (must expose REL_X + BTN_LEFT)."""
+    import evdev
+    for path in evdev.list_devices():
+        dev = evdev.InputDevice(path)
+        caps = dev.capabilities()
+        has_rel_x = (evdev.ecodes.EV_REL in caps and
+                     evdev.ecodes.REL_X in caps.get(evdev.ecodes.EV_REL, []))
+        has_btn = (evdev.ecodes.EV_KEY in caps and
+                   evdev.ecodes.BTN_LEFT in caps.get(evdev.ecodes.EV_KEY, []))
+        if has_rel_x and has_btn:
+            return dev
+    return None
+
+
+# -- Main class ---------------------------------------------------------------
+
+class MouseFerry:
+    STARTUP_DELAY = 1.0
+    ENTRY_COOLDOWN = 0.5
+    CAPTURE_SETTLE = 0.5
+    RETURN_WINDOW = 0.3
+    RETURN_NET_THRESHOLD = 800
+
+    def __init__(self, config):
+        self.edge = config.get("general", "edge", fallback="left")
+        self.threshold = config.getint("general", "threshold", fallback=2)
+        self.poll_s = config.getint("general", "poll_ms", fallback=50) / 1000.0
+        self.serial = config.get("scrcpy", "serial", fallback="").strip()
+        self.extra_args = config.get("scrcpy", "extra_args", fallback="").split()
+
+        self.RETURN_NET_THRESHOLD = config.getint("general", "return_sensitivity",
+                                                   fallback=self.RETURN_NET_THRESHOLD)
+        self.scrcpy_proc = None
+        self.scrcpy_wid = None
+        self.active = False
+        self.stopping = False
+        self.last_release = 0.0
+        self.prev_window = None
+
+        self._mouse_dev = None
+        self._tracker_thread = None
+        self._want_release = False
+        self._track_active = False
+        self._track_started = 0.0
+        self._recent_dx = []
+        # Return direction: +1 = rightward (tablet on left), -1 = leftward (tablet on right)
+        self._return_sign = 1 if self.edge == "left" else -1
+
+        self.screen_w, self.screen_h = get_screen_geometry()
+        self.android_w, self.android_h = get_android_screen(self.serial)
+
+        open(LOG_FILE, "w").close()
+
+        dev = find_mouse_device()
+        if not dev:
+            print(f"[{APP_NAME}] ERROR: no mouse found in /dev/input")
+            print(f"[{APP_NAME}] Fix: sudo usermod -aG input $USER, then log out and back in")
+            sys.exit(1)
+        self._mouse_dev = dev
+
+        print(f"[{APP_NAME}] Mouse: {dev.name}")
+        print(f"[{APP_NAME}] PC:      {self.screen_w}x{self.screen_h}")
+        print(f"[{APP_NAME}] Android: {self.android_w}x{self.android_h}")
+        print(f"[{APP_NAME}] Edge:    {self.edge}")
+        print(f"[{APP_NAME}] Ready — move the mouse to the {self.edge} edge to ferry over.")
+        log(f"start mouse={dev.name} edge={self.edge} "
+            f"screen={self.screen_w}x{self.screen_h} android={self.android_w}x{self.android_h}")
+
+    def _build_cmd(self):
+        cmd = ["scrcpy", f"--window-title={APP_NAME}",
+               "--mouse=uhid", "--keyboard=sdk",
+               "--no-video", "--no-audio",
+               "--window-x=0", "--window-y=0"]
+        if self.serial:
+            cmd += ["-s", self.serial]
+        cmd += [a for a in self.extra_args if a]
+        return cmd
+
+    def _at_edge(self, x):
+        if self.edge == "left":
+            return x <= self.threshold
+        return x >= self.screen_w - self.threshold
+
+    # -- scrcpy (start/kill per session) -------------------------------------
+
+    def _start_scrcpy(self):
+        cmd = self._build_cmd()
+        log(f"scrcpy start: {' '.join(cmd)}")
+        self.scrcpy_proc = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(80):
+            time.sleep(0.1)
+            wid = find_scrcpy_window()
+            if wid:
+                break
+        if not wid:
+            log("ERROR: window not found")
+            return False
+        self.scrcpy_wid = wid
+        log(f"scrcpy ready wid={wid}")
+        return True
+
+    def _kill_scrcpy(self):
+        if self.scrcpy_proc and self.scrcpy_proc.poll() is None:
+            self.scrcpy_proc.terminate()
+            try:
+                self.scrcpy_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.scrcpy_proc.kill()
+        self.scrcpy_proc = None
+        self.scrcpy_wid = None
+        log("scrcpy killed")
+
+    # -- evdev tracker -------------------------------------------------------
+
+    def _start_tracker(self):
+        self._tracker_thread = threading.Thread(target=self._track_loop, daemon=True)
+        self._tracker_thread.start()
+
+    def _track_loop(self):
+        import evdev
+        try:
+            while not self.stopping:
+                r, _, _ = select.select([self._mouse_dev.fd], [], [], 0.2)
+                if not r:
+                    continue
+                for event in self._mouse_dev.read():
+                    if self.stopping:
+                        return
+                    if not self._track_active:
+                        continue
+                    if event.type == evdev.ecodes.EV_REL and event.code == evdev.ecodes.REL_X:
+                        now = time.time()
+                        if now - self._track_started < self.CAPTURE_SETTLE:
+                            continue
+                        self._recent_dx.append((now, event.value))
+                        cutoff = now - self.RETURN_WINDOW
+                        self._recent_dx = [e for e in self._recent_dx if e[0] > cutoff]
+                        # Net movement in the return direction
+                        net = sum(v for _, v in self._recent_dx) * self._return_sign
+                        if net >= self.RETURN_NET_THRESHOLD:
+                            log(f"RETURN! net={net}")
+                            self._want_release = True
+                            self._track_active = False
+        except Exception as e:
+            log(f"evdev error: {e}")
+
+    # -- Enter Android --------------------------------------------------------
+
+    def switch_to_android(self):
+        if self.active:
+            return
+        self.prev_window = get_active_window()
+        print(f"[{APP_NAME}] Connecting...")
+
+        if not self._start_scrcpy():
+            print(f"[{APP_NAME}] ERROR: scrcpy failed to start")
+            return
+
+        # Focus scrcpy → SDL captures the mouse
+        run("xdotool", "windowactivate", self.scrcpy_wid)
+        time.sleep(0.15)
+
+        self._recent_dx = []
+        self._want_release = False
+        self._track_started = time.time()
+        self._track_active = True
+
+        self.active = True
+        log("→ Android")
+        print(f"[{APP_NAME}] → Android")
+
+    # -- Return to PC ---------------------------------------------------------
+
+    def _release_to_desktop(self):
+        if not self.active:
+            return
+        self._track_active = False
+        self.active = False
+
+        # Kill scrcpy → UHID removed → no phantom cursor
+        self._kill_scrcpy()
+
+        if self.prev_window:
+            try:
+                run("xdotool", "windowactivate", self.prev_window)
+            except Exception:
+                pass
+
+        margin = 50
+        if self.edge == "left":
+            warp_mouse(margin, self.screen_h // 2)
+        else:
+            warp_mouse(self.screen_w - margin, self.screen_h // 2)
+
+        self.last_release = time.time()
+        self._want_release = False
+        log("→ Desktop")
+        print(f"[{APP_NAME}] → Desktop")
+
+    # -- Main loop ------------------------------------------------------------
+
+    def main_loop(self):
+        start_time = time.time()
+        while not self.stopping:
+            now = time.time()
+
+            if self.active:
+                if self._want_release:
+                    self._release_to_desktop()
+            else:
+                if (now - start_time > self.STARTUP_DELAY and
+                        now - self.last_release > self.ENTRY_COOLDOWN):
+                    x, _ = get_mouse_pos()
+                    if self._at_edge(x):
+                        self.switch_to_android()
+
+            time.sleep(self.poll_s)
+
+    def run(self):
+        self._start_tracker()
+        try:
+            self.main_loop()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.stop()
+
+    def stop(self):
+        self.stopping = True
+        self._kill_scrcpy()
+        log("shutdown")
+        print(f"\n[{APP_NAME}] Shutting down...")
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="mouseferry — seamless mouse sharing: Linux PC <-> Android via scrcpy")
+    parser.add_argument("--config", default=CONFIG_FILE,
+                        help="Path to config file (default: ~/.config/mouseferry/config.ini)")
+    parser.add_argument("--left", action="store_const", const="left", dest="edge",
+                        help="Android device is to the left of the PC")
+    parser.add_argument("--right", action="store_const", const="right", dest="edge",
+                        help="Android device is to the right of the PC")
+    args = parser.parse_args()
+
+    for tool in ["xdotool", "scrcpy", "adb"]:
+        if not shutil.which(tool):
+            print(f"Error: '{tool}' not found in PATH.")
+            sys.exit(1)
+
+    if not os.path.exists(args.config):
+        os.makedirs(os.path.dirname(args.config), exist_ok=True)
+        with open(args.config, "w") as f:
+            f.write(DEFAULT_CONFIG)
+
+    config = configparser.ConfigParser()
+    config.read(args.config)
+
+    # CLI flag overrides config
+    if args.edge:
+        if not config.has_section("general"):
+            config.add_section("general")
+        config.set("general", "edge", args.edge)
+
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    MouseFerry(config).run()
+
+
+if __name__ == "__main__":
+    main()

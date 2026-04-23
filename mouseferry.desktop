@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=mouseferry
+Comment=Seamless mouse sharing between Linux PC and Android
+# Replace YOUR_HOME with the absolute path of your home directory
+# (e.g. /home/yourname). The .desktop spec does not expand ~ or $HOME.
+Exec=/YOUR_HOME/.local/bin/mouseferry --left
+Icon=input-mouse
+Terminal=false
+Categories=Utility;
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=5

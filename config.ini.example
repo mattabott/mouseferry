@@ -1,0 +1,23 @@
+# mouseferry — configuration
+
+[general]
+# Screen edge that triggers the switch to Android: left | right
+edge = left
+
+# Pixels from the edge required to trigger the switch
+threshold = 2
+
+# Mouse polling interval in ms
+poll_ms = 50
+
+# Return sensitivity: how strongly you have to sweep the mouse back toward
+# the PC to return control. Higher values = a more decisive gesture is
+# required. Recommended: 1500-3000.
+return_sensitivity = 2000
+
+[scrcpy]
+# Android device serial (empty = auto-detect via adb)
+serial =
+
+# Extra flags passed to scrcpy (space-separated)
+extra_args =
