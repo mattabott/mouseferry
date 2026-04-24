@@ -110,9 +110,13 @@ threshold = 2
 poll_ms = 50
 
 # Return sensitivity: how strongly you have to sweep the mouse back toward
-# the PC to return control. Higher values = a more decisive gesture.
-# Recommended range: 1500-3000.
-return_sensitivity = 2000
+# the PC to return control. Higher values = a more decisive gesture is
+# required. Typical real-world range: 600-1200 depending on mouse DPI
+# (the gesture produces a net REL_X delta in this range over ~300 ms).
+return_sensitivity = 800
+
+# Which monitor's edge counts as the trigger. See "Multi-monitor setups" below.
+monitor = primary
 
 [scrcpy]
 # Android device serial (empty = auto-detect via adb)
@@ -122,7 +126,7 @@ serial =
 extra_args =
 ```
 
-Tweak `return_sensitivity` if you find the cursor bounces back by accident (raise it) or if the return feels too stiff (lower it).
+Tweak `return_sensitivity` if you find the cursor bounces back by accident (raise it) or if the return feels too stiff (lower it). See [Multi-monitor setups](#multi-monitor-setups) below for the `monitor` key.
 
 ## Multi-monitor setups
 
