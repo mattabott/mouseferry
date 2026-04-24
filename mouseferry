@@ -69,6 +69,17 @@ def parse_xrandr_query(text):
             ))
     return monitors
 
+
+def parse_xrandr():
+    """Shell out to xrandr and return monitors. Tries --listmonitors, falls back to --query."""
+    out = run("xrandr", "--listmonitors")
+    monitors = parse_xrandr_listmonitors(out.stdout) if out.returncode == 0 else []
+    if not monitors:
+        out = run("xrandr", "--query")
+        if out.returncode == 0:
+            monitors = parse_xrandr_query(out.stdout)
+    return monitors
+
 APP_NAME = "mouseferry"
 CONFIG_DIR = os.path.expanduser(f"~/.config/{APP_NAME}")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.ini")
