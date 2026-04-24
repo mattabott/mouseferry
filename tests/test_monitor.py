@@ -322,3 +322,19 @@ def test_entry_matches_unknown_direction_raises(entry_on_mon_at_origin):
     entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="diagonal")
     with pytest.raises(ValueError, match="unknown direction"):
         mouseferry.entry_matches(entry, 0, 0, 2)
+
+
+def test_entry_matches_threshold_zero_exact_edge(entry_on_mon_at_origin):
+    e = mouseferry.Entry(entry_on_mon_at_origin, "left")
+    assert mouseferry.entry_matches(e, 0, 500, 0) is True     # exactly on edge
+    assert mouseferry.entry_matches(e, 1, 500, 0) is False    # one pixel inside
+
+
+def test_entry_matches_threshold_inclusive_boundary(entry_on_mon_at_origin):
+    e = mouseferry.Entry(entry_on_mon_at_origin, "left")
+    assert mouseferry.entry_matches(e, 2, 500, 2) is True     # x == m.x + threshold
+    assert mouseferry.entry_matches(e, 3, 500, 2) is False    # x == m.x + threshold + 1
+
+
+def test_parse_entry_spec_strips_whitespace():
+    assert mouseferry.parse_entry_spec(" primary : right ") == ("primary", "right")

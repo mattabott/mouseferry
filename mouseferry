@@ -29,12 +29,17 @@ from collections import namedtuple
 Monitor = namedtuple("Monitor", "name x y w h primary")
 
 Entry = namedtuple("Entry", "monitor direction")
+Entry.__doc__ = "A configured entry edge: a Monitor plus one of left/right/top/bottom."
 
 _VALID_DIRECTIONS = ("left", "right", "top", "bottom")
 
 
 def parse_entry_spec(raw):
     """Parse a --entry CLI value like 'primary:right' into (spec, direction).
+
+    Leading/trailing whitespace in spec and direction is stripped. The last ':'
+    in raw is the separator (rsplit), so monitor names containing ':' are
+    permitted but will fail later in resolve_target if not actually present.
 
     Raises ValueError with a user-facing message on malformed input.
     """
