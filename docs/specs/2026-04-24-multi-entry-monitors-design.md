@@ -1,10 +1,22 @@
 # Multi-entry monitors with per-entry direction — design
 
-- Status: approved (interface + implementation), pending implementation
+- Status: **shipped** in v0.2.0 (with design evolutions during implementation — see "Design evolution" below)
 - Date: 2026-04-24
 - Related: [issue #1 (GitHub)](https://github.com/mattabott/mouseferry/issues/1)
 - Target version: `mouseferry` v0.2.0
 - Supersedes the v0.3 label in issue #1 (no v0.2 was planned in between; this feature is now v0.2.0).
+
+## Design evolution
+
+The following changes were made during implementation based on real-world testing. The Decisions table and the sections below reflect the final shipped state; the original choices (useful as a history of reasoning) are listed in the "Rejected alternatives" column.
+
+1. **`entry_matches` bounding-box fix.** The first implementation of `entry_matches` checked only the perpendicular band (e.g. the Y range for `right` entries) plus a one-sided inequality on the edge axis. In the user's 3-monitor setup this caused `--entry DisplayPort-2:bottom` to match on startup whenever the cursor happened to be on a different monitor located below DisplayPort-2, because `y >= m.y + m.h - threshold` was trivially satisfied. Fix: require the cursor to be inside the target monitor's full bounding box (both axes) before checking edge proximity. Regression tests added.
+
+2. **Default `--return`: fixed monitor → dynamic (sweep-based).** Initially the default return monitor was "the first `--entry`'s monitor"; this was then revised mid-design to "X11 primary"; finally revised again to "dynamic — whichever entry's (axis, sign) condition the sweep satisfies, warp to that entry's monitor near the named edge". The dynamic behavior removes the need for the user to remember which entry triggered the ferry in order to sweep back correctly, and enables bi-directional bridges out of the box.
+
+3. **Return warp point.** Originally "center of the return monitor" in multi-entry mode. Replaced by "50px inside the winning entry's named edge" (e.g. right entry → 50px from the right edge, top entry → 50px from the top edge). Matches the v0.1.1 single-entry behavior and produces a visually natural "emerge where you left" effect. Explicit `--return MONITOR` override still warps to center (clearly distinct from the sweep-driven dynamic case).
+
+4. **Tracker axis-awareness.** The tracker originally watched a single axis set at `switch_to_android` time (one axis per ferry session). In the final implementation it watches both REL_X and REL_Y simultaneously and evaluates all configured entries via a new pure helper `winning_entry(entries, sum_x, sum_y, threshold)`. The first entry whose condition is met wins and the tracker signals release.
 
 ## Problem
 
@@ -27,7 +39,7 @@ Concrete scenario from the user:
 - **Config-file storage of multi-entry**. User explicitly rejected this; the CLI-only contract is a deliberate UX choice to force an explicit decision at launch.
 - **Multiple Android devices.** Single device per `mouseferry` process. If a user ever wants multi-device, that's a separate, larger effort (serial routing, multiple scrcpy subprocesses, output disambiguation).
 - **Hotplug re-detection.** Same as v0.1.1: snapshot at startup, restart required if the layout changes.
-- **Variable return monitor per entry.** The return is always a single monitor regardless of which entry triggered the ferry.
+- **Variable return monitor per entry.** Superseded: v0.2 as shipped uses *dynamic return* where the sweep direction picks the return entry (see Decisions below). The non-goal was "per-entry static return config"; the dynamic behavior is the evolution of that idea.
 - **TUI / interactive mode.** Rejected in favor of pure CLI (the wizard gets boring by the 10th launch).
 - **Profile system** (named sets of entries persisted in config). Can be added later if demand emerges.
 - **Wayland support.** Unchanged from v0.1.1.
@@ -39,10 +51,10 @@ Concrete scenario from the user:
 | Where multi-entry is configured | CLI only (`--entry`, `--return`) | Config section (rejected by user), mutex config+CLI, profile system |
 | CLI format | `--entry MONITOR:DIRECTION`, repeatable | `--entries a:right,b:bottom` (awkward to script), two flags `--from --edge` (ambiguous with repetition) |
 | Separator inside `--entry` value | `:` | `=` (looks like assignment), `/` (path-like), `,` (list-like, collides) |
-| Default `--return` if omitted | X11 primary monitor | First `--entry`'s monitor (surprising when entries are ordered arbitrarily), require explicit `--return` (ergonomically bad) |
+| Default `--return` if omitted | **Dynamic** — sweep direction picks which entry's monitor to warp to (see `winning_entry()`) | Static X11 primary (less natural for multi-entry setups), static first-entry's monitor (order-dependent surprise), require explicit `--return` (ergonomically bad) |
 | Legacy flag behavior (`--left`/`--right`/`--monitor`) when `--entry` is passed | Ignored with WARNING, not error | Hard error (breaks scripts migrating incrementally) |
-| Return warp target | Center of `return_mon` in multi; lateral (as v0.1.1) in single | Center always (changes v0.1.1 UX), lateral in multi (ambiguous which side) |
-| Return-detection axis | Per-active-entry (set at `switch_to_android`), stored on the class | Fixed per run (breaks if entries mix directions), inferred each tick (more state) |
+| Return warp target | Dynamic multi-entry: 50px inside the winning entry's named edge. Explicit `--return` override: center of that monitor. Single-entry: lateral warp (v0.1.1 compat). | Center always (changes v0.1.1 UX); lateral always (ambiguous when sweep+entry don't line up cleanly) |
+| Return-detection axis | Both X and Y axes monitored in parallel; `winning_entry()` scans all configured entries and picks the first whose axis+sign+threshold is satisfied | Per-active-entry axis (required remembering which entry triggered to return; bad UX with multiple entries — led to the user's original bug report) |
 | `return_sensitivity` for X vs Y | Single shared value, same as v0.1.1 | Separate `return_sensitivity_x` / `_y` (no evidence needed yet — YAGNI) |
 | Edge values allowed in single-entry (config-driven) mode | `left` / `right` only (preserves v0.1.1 behavior bit-for-bit) | Allow all 4 (would require 4-way warp branch in `_release_to_desktop`; unnecessary because users who need top/bottom naturally want multi-entry anyway) |
 
@@ -100,10 +112,12 @@ No hard error — a user migrating incrementally can leave their old flags in an
 [mouseferry] Entries:
   - eDP-1 (right)
   - DP-2 (bottom)
-[mouseferry] Return: eDP-1
+[mouseferry] Return: dynamic — depends on sweep direction
 [mouseferry] Android: 1600x2560
-[mouseferry] Ready — ferry triggers from any configured edge.
+[mouseferry] Ready — ferry triggers from any configured edge; sweep in the matching axis to return.
 ```
+
+When `--return MONITOR` is passed explicitly, the `Return:` line becomes e.g. `Return: eDP-1 (fixed via --return)`.
 
 Any per-entry fallback (e.g. `--entry HDMI-99:right` when HDMI-99 is not connected) prints its own `WARNING:` line before the `Entries:` block.
 
@@ -116,6 +130,8 @@ Identical to v0.1.1 — same `Target monitor:` line, same `Ready — move the mo
 Adds a fourth argument group (`multi-entry (v0.2+, …)`) with the two new flags. Existing groups (`direction`, `monitor`, `introspection`) are preserved for backward compatibility, clearly labeled as the v0.1.1-style entry point. Epilog gains one example line for multi-entry.
 
 ## Implementation
+
+> **Note on this section (post-release):** the code blocks below reflect the *initial* implementation design. Several items evolved during integration — see the **Design evolution** section at the top of this document for the final shipped behavior. In particular: (a) `entry_matches` now requires the cursor to be inside the monitor's full bounding box before checking edge proximity; (b) `_track_loop` accumulates both axes in parallel and delegates to a new pure helper `winning_entry(entries, sum_x, sum_y, threshold)` instead of using per-session `self._return_axis` / `self._return_sign`; (c) `_release_to_desktop` has three branches — dynamic multi-entry (inside-edge warp on the winning entry), explicit `--return` override (center warp), single-entry (lateral warp, v0.1.1 compat). Consult the current source at `mouseferry:74-163` (helpers) and `mouseferry:_track_loop`/`_release_to_desktop` for authoritative behavior.
 
 ### Data model
 
@@ -414,15 +430,16 @@ No changes. `.github/workflows/ci.yml` already runs ruff + pytest; it will pick 
 Implementation is done when:
 
 1. **Backward compat:** running `mouseferry --right` or `mouseferry --right --monitor 1` on a v0.1.1 config produces identical behavior to v0.1.1 (same startup output, same warp logic, same tracker).
-2. **Multi-entry happy path:** `mouseferry --entry primary:right --entry 3:bottom` on the user's real 3-monitor setup triggers the ferry both from the right edge of the primary AND from the bottom edge of monitor 3, and each return lands in the center of the primary monitor.
-3. **Return axis switching:** when the ferry was triggered from a `top`/`bottom` entry, a vertical sweep of the mouse returns control (not a horizontal one).
+2. **Multi-entry happy path:** `mouseferry --entry 1:right --entry 2:bottom` on the user's real 3-monitor setup triggers the ferry both from the right edge of monitor 1 AND from the bottom edge of monitor 2.
+3. **Dynamic return:** after ferry, sweep left returns to the entry with direction `right`/`left` (monitor 1 in the example), sweep up returns to the entry with direction `top`/`bottom` (monitor 2). Cursor warps 50px inside the named edge of the winning entry's monitor.
 4. **Fallback per entry:** `--entry HDMI-99:right` (nonexistent) prints a WARNING and falls back to primary for that entry; other entries are unaffected.
-5. **Default `--return`:** omitting `--return` uses the X11 primary monitor (so the cursor lands on the user's main workspace by default); specifying `--return N` overrides.
-6. **Legacy flag warning:** `mouseferry --right --entry primary:right` prints a single WARNING line listing `--right` as ignored.
-7. **Validation error:** `mouseferry --entry primary:sideways` exits with a clear error mentioning the four valid directions.
-8. **`--help` documented:** the four argument groups (`direction`, `monitor`, `introspection`, `multi-entry`) are all present and the epilog includes at least one multi-entry example.
-9. **Unit tests:** all ~38 tests pass. `ruff check mouseferry` green.
-10. **No regression:** existing 24 tests still pass.
+5. **Explicit `--return` override:** `--return MONITOR` makes the cursor always warp to the center of that monitor regardless of sweep direction. Startup banner shows `Return: <name> (fixed via --return)`.
+6. **Entry validation (`entry_matches`):** the cursor must be inside the target monitor's full bounding box before matching an edge; cursors on adjacent monitors MUST NOT cause false matches (v0.2.0-rc regression test).
+7. **Legacy flag warning:** `mouseferry --right --entry primary:right` prints a single WARNING line listing `--right` as ignored.
+8. **Validation error:** `mouseferry --entry primary:sideways` exits with a clear error mentioning the four valid directions.
+9. **`--help` documented:** the four argument groups (`direction`, `monitor`, `introspection`, `multi-entry`) are all present and the epilog includes at least one multi-entry example.
+10. **Unit tests:** all 61+ tests pass. `ruff check mouseferry` green.
+11. **No regression:** existing v0.1.1 tests still pass.
 
 ## Out of scope (explicitly deferred)
 

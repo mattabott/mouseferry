@@ -1115,3 +1115,24 @@ Verified identifiers used across tasks:
 - `cli_entries` and `cli_return` parameter names — consistent in Task 5 step 5.1 constructor and step 5.7 call site
 
 No inconsistencies found.
+
+---
+
+## Post-implementation addendum
+
+The plan above was executed as written, but during real-hardware testing three design changes landed on top. Extra commits after the last plan task:
+
+1. **`entry_matches` bounding-box fix** (`67c2a8b`). Tasks 3 and 4 as specified check only the perpendicular band plus a one-sided inequality on the edge axis. This let cursors on *adjacent* monitors in the same band match (e.g. cursor on the laptop matching `DisplayPort-2:bottom` when the laptop is vertically below DisplayPort-2). Fix: require cursor inside the monitor's full bounding box (both axes) before checking edge proximity. 4 regression tests added.
+
+2. **Default `--return` evolution** (`95ebd46`, superseded by `a3e7355`). First iteration defaulted to "first `--entry`'s monitor" (per the spec); after user feedback that this was counterintuitive, the default was changed to X11 primary (`95ebd46`). Shortly after, user testing revealed that "fixed return monitor" was itself the wrong abstraction for their multi-entry setup — they wanted the return to depend on the sweep direction, not on a static monitor. Final design (`a3e7355`): dynamic return via a new pure helper `winning_entry(entries, sum_x, sum_y, threshold)`.
+
+3. **Tracker axis-awareness** (`a3e7355`). The spec-originally-designed `_track_loop` watched a single axis set per ferry session in `switch_to_android` (`self._return_axis`, `self._return_sign`). With dynamic return this no longer makes sense: the tracker now accumulates both REL_X and REL_Y in parallel (`self._recent_x`, `self._recent_y`), and on each event delegates to `winning_entry()` to check all configured entries against the current accumulator state. 7 new tests for `winning_entry`.
+
+4. **`_release_to_desktop` three-branch warp** (`a3e7355`). Instead of "multi-entry → center of `return_mon`, single-entry → lateral", the method now distinguishes three cases:
+   - Single-entry: lateral warp (v0.1.1 compat, unchanged)
+   - Multi-entry with explicit `--return`: warp to center of the override monitor
+   - Multi-entry dynamic (default): warp 50px inside the winning entry's named edge
+
+Final test count: **61 unit tests** (up from the plan's expected ~47). Final `mouseferry` size: ~630 lines (vs the plan's estimate of ~670 — the consolidation around `winning_entry` removed some class state). CI green.
+
+See `docs/specs/2026-04-24-multi-entry-monitors-design.md` → "Design evolution" section for the narrative rationale behind each of these changes.
