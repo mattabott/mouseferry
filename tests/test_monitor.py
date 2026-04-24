@@ -157,3 +157,42 @@ def test_resolve_named_not_connected_no_primary_falls_back_to_first(three_mons):
 def test_resolve_empty_monitors_raises():
     with pytest.raises(ValueError):
         mouseferry.resolve_target([], "primary", (0, 0))
+
+
+def test_resolve_numeric_index_first(three_mons):
+    target, reason = mouseferry.resolve_target(three_mons, "1", (0, 0))
+    assert target.name == "HDMI-1"  # first in fixture
+    assert reason is None
+
+
+def test_resolve_numeric_index_middle(three_mons):
+    target, reason = mouseferry.resolve_target(three_mons, "2", (0, 0))
+    assert target.name == "eDP-1"
+    assert reason is None
+
+
+def test_resolve_numeric_index_last(three_mons):
+    target, reason = mouseferry.resolve_target(three_mons, "3", (0, 0))
+    assert target.name == "DP-2"
+    assert reason is None
+
+
+def test_resolve_numeric_index_zero_is_out_of_range(three_mons):
+    """0 is NOT a valid 1-based index; must fall back."""
+    target, reason = mouseferry.resolve_target(three_mons, "0", (0, 0))
+    assert target.name == "eDP-1"  # primary fallback
+    assert "out of range" in reason
+    assert "'0'" in reason
+
+
+def test_resolve_numeric_index_too_high_falls_back_to_primary(three_mons):
+    target, reason = mouseferry.resolve_target(three_mons, "99", (0, 0))
+    assert target.name == "eDP-1"
+    assert "99" in reason and "out of range" in reason
+
+
+def test_resolve_numeric_index_out_of_range_no_primary(three_mons):
+    no_primary = [m._replace(primary=False) for m in three_mons]
+    target, reason = mouseferry.resolve_target(no_primary, "99", (0, 0))
+    assert target.name == "HDMI-1"
+    assert "first available" in reason

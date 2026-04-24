@@ -21,6 +21,7 @@ return_sensitivity = 800
 #   primary           use the X11 primary monitor (default)
 #   auto-from-cursor  snapshot the monitor under the cursor at startup
 #   <output-name>     exact xrandr output name, e.g. eDP-1, HDMI-1, DP-2
+#   <1-based index>   index from `mouseferry --list-monitors`, e.g. 1
 # Use `mouseferry --list-monitors` to see what's connected.
 monitor = primary
 

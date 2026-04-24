@@ -141,6 +141,9 @@ mouseferry --list-monitors
 # Pick a specific output
 mouseferry --right --monitor eDP-1
 
+# Or use a 1-based index from --list-monitors
+mouseferry --right --monitor 1
+
 # Or snapshot whichever monitor the cursor is on right now
 mouseferry --right --monitor auto-from-cursor
 ```
@@ -159,6 +162,7 @@ Values:
 | `primary` *(default)* | The monitor marked `primary` in `xrandr`. Change it with `xrandr --output <name> --primary`. |
 | `auto-from-cursor` | Whichever monitor the cursor is on at startup. Position the mouse on the target monitor, then launch. |
 | `<output-name>` | Exact xrandr output name (e.g. `eDP-1`, `HDMI-1`, `DP-2`). Stable across sessions for the same hardware. |
+| `<1-based index>` | Index from `mouseferry --list-monitors` (e.g. `1` for the first listed, `2` for the second). Convenient for quick switching when you don't remember the xrandr name. |
 
 The edge check is 2D: the trigger only fires when the cursor is both at the configured edge and inside the target monitor's vertical band. This prevents false positives when the cursor wanders onto a monitor stacked above or below.
 

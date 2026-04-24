@@ -106,6 +106,15 @@ def resolve_target(monitors, spec, cursor_pos):
             return primary, "cursor not over any monitor, using primary"
         return monitors[0], "cursor not over any monitor, using first available"
 
+    # numeric 1-based index
+    if spec.isdigit():
+        idx = int(spec) - 1
+        if 0 <= idx < len(monitors):
+            return monitors[idx], None
+        if primary:
+            return primary, f"monitor index '{spec}' out of range (1-{len(monitors)}), using primary"
+        return monitors[0], f"monitor index '{spec}' out of range (1-{len(monitors)}), using first available"
+
     target = next((m for m in monitors if m.name == spec), None)
     if target:
         return target, None
@@ -142,6 +151,7 @@ return_sensitivity = 800
 #   primary           use the X11 primary monitor (default)
 #   auto-from-cursor  snapshot the monitor under the cursor at startup
 #   <output-name>     exact xrandr output name, e.g. eDP-1, HDMI-1, DP-2
+#   <1-based index>   index from `mouseferry --list-monitors`, e.g. 1
 # Use `mouseferry --list-monitors` to see what's connected.
 monitor = primary
 
@@ -464,14 +474,16 @@ def list_monitors_action():
         print("No monitors detected (is X running and DISPLAY set?)")
         sys.exit(1)
     print("Connected monitors:")
-    for m in monitors:
+    for i, m in enumerate(monitors, start=1):
         marker = "   primary" if m.primary else ""
-        print(f"  {m.name:8} {m.w}x{m.h}+{m.x}+{m.y}{marker}")
+        print(f"  {i}. {m.name:8} {m.w}x{m.h}+{m.x}+{m.y}{marker}")
     print()
     default_name = next((m.name for m in monitors if m.primary), monitors[0].name)
-    print("To target one of these in your config, set:")
-    print("  [general]")
-    print(f"  monitor = {default_name}")
+    print("To target one of these, set in config or pass to --monitor:")
+    print(f"  monitor = {default_name:17}  # by xrandr name")
+    print(f"  monitor = {'1':17}  # by 1-based index (see above)")
+    print(f"  monitor = {'primary':17}  # X11 primary monitor")
+    print(f"  monitor = {'auto-from-cursor':17}  # monitor under the cursor at startup")
     sys.exit(0)
 
 
@@ -507,7 +519,8 @@ docs:        https://github.com/mattabott/mouseferry
     monitor.add_argument("--monitor", metavar="SPEC", default=None,
                          help="which monitor's edge counts as the trigger. "
                               "Accepted: primary | auto-from-cursor | <xrandr output name> "
-                              "(e.g. eDP-1). Use --list-monitors to see what's connected.")
+                              "| <1-based index from --list-monitors> (e.g. eDP-1 or 1). "
+                              "Use --list-monitors to see what's connected.")
 
     introspection = parser.add_argument_group("introspection")
     introspection.add_argument("--list-monitors", action="store_true",
