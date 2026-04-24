@@ -401,10 +401,12 @@ class MouseFerry:
                 pass
 
         margin = 50
+        m = self.target_mon
+        cy = m.y + m.h // 2
         if self.edge == "left":
-            warp_mouse(margin, self.screen_h // 2)
+            warp_mouse(m.x + margin, cy)
         else:
-            warp_mouse(self.screen_w - margin, self.screen_h // 2)
+            warp_mouse(m.x + m.w - margin, cy)
 
         self.last_release = time.time()
         self._want_release = False
