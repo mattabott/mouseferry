@@ -133,8 +133,17 @@ poll_ms = 50
 
 # Return sensitivity: how strongly you have to sweep the mouse back toward
 # the PC to return control. Higher values = a more decisive gesture is
-# required. Recommended: 1500-3000.
-return_sensitivity = 2000
+# required. Typical real-world range: 600-1200 depending on mouse DPI
+# (the gesture produces a net REL_X delta in this range over ~300 ms).
+return_sensitivity = 800
+
+# Which monitor's edge counts as the trigger.
+# Allowed values:
+#   primary           use the X11 primary monitor (default)
+#   auto-from-cursor  snapshot the monitor under the cursor at startup
+#   <output-name>     exact xrandr output name, e.g. eDP-1, HDMI-1, DP-2
+# Use `mouseferry --list-monitors` to see what's connected.
+monitor = primary
 
 [scrcpy]
 # Android device serial (empty = auto-detect via adb)
