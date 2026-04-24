@@ -156,17 +156,6 @@ def log(msg):
 
 # -- X11 helpers -------------------------------------------------------------
 
-def get_screen_geometry():
-    out = run("xrandr")
-    tw, th = 0, 0
-    for line in out.stdout.splitlines():
-        if " connected" in line:
-            m = re.search(r"(\d+)x(\d+)\+(\d+)\+(\d+)", line)
-            if m:
-                w, h, x, y = int(m[1]), int(m[2]), int(m[3]), int(m[4])
-                tw, th = max(tw, x + w), max(th, y + h)
-    return (tw, th) if tw else (1920, 1080)
-
 def get_mouse_pos():
     out = run("xdotool", "getmouselocation")
     parts = dict(p.split(":") for p in out.stdout.strip().split())
@@ -245,7 +234,19 @@ class MouseFerry:
         # Return direction: +1 = rightward (tablet on left), -1 = leftward (tablet on right)
         self._return_sign = 1 if self.edge == "left" else -1
 
-        self.screen_w, self.screen_h = get_screen_geometry()
+        # Monitor snapshot: taken once at startup, used for edge detection.
+        self.monitors = parse_xrandr()
+        if not self.monitors:
+            print(f"[{APP_NAME}] ERROR: cannot query xrandr (DISPLAY may be unavailable). "
+                  f"mouseferry requires a running X session.")
+            sys.exit(1)
+
+        monitor_spec = config.get("general", "monitor", fallback="primary").strip() or "primary"
+        cursor_pos = get_mouse_pos()
+        self.target_mon, fallback_reason = resolve_target(
+            self.monitors, monitor_spec, cursor_pos
+        )
+
         self.android_w, self.android_h = get_android_screen(self.serial)
 
         open(LOG_FILE, "w").close()
@@ -258,12 +259,21 @@ class MouseFerry:
         self._mouse_dev = dev
 
         print(f"[{APP_NAME}] Mouse: {dev.name}")
-        print(f"[{APP_NAME}] PC:      {self.screen_w}x{self.screen_h}")
+        detected = ", ".join(
+            f"{m.name} ({'primary ' if m.primary else ''}{m.w}x{m.h}+{m.x}+{m.y})"
+            for m in self.monitors
+        )
+        print(f"[{APP_NAME}] Monitors detected: {detected}")
+        if fallback_reason:
+            print(f"[{APP_NAME}] WARNING: {fallback_reason}")
+        t = self.target_mon
+        print(f"[{APP_NAME}] Target monitor: {t.name} ({t.w}x{t.h}+{t.x}+{t.y})")
         print(f"[{APP_NAME}] Android: {self.android_w}x{self.android_h}")
         print(f"[{APP_NAME}] Edge:    {self.edge}")
-        print(f"[{APP_NAME}] Ready — move the mouse to the {self.edge} edge to ferry over.")
+        print(f"[{APP_NAME}] Ready — move the mouse to the {self.edge} edge of {t.name} to ferry over.")
         log(f"start mouse={dev.name} edge={self.edge} "
-            f"screen={self.screen_w}x{self.screen_h} android={self.android_w}x{self.android_h}")
+            f"target={t.name} geom={t.w}x{t.h}+{t.x}+{t.y} "
+            f"android={self.android_w}x{self.android_h} fallback={fallback_reason or 'none'}")
 
     def _build_cmd(self):
         cmd = ["scrcpy", f"--window-title={APP_NAME}",
