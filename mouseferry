@@ -285,10 +285,14 @@ class MouseFerry:
         cmd += [a for a in self.extra_args if a]
         return cmd
 
-    def _at_edge(self, x):
+    def _at_edge(self, x, y):
+        m = self.target_mon
+        # Y must be inside the target monitor's vertical band
+        if not (m.y <= y < m.y + m.h):
+            return False
         if self.edge == "left":
-            return x <= self.threshold
-        return x >= self.screen_w - self.threshold
+            return x <= m.x + self.threshold
+        return x >= m.x + m.w - self.threshold
 
     # -- scrcpy (start/kill per session) -------------------------------------
 
@@ -420,8 +424,8 @@ class MouseFerry:
             else:
                 if (now - start_time > self.STARTUP_DELAY and
                         now - self.last_release > self.ENTRY_COOLDOWN):
-                    x, _ = get_mouse_pos()
-                    if self._at_edge(x):
+                    x, y = get_mouse_pos()
+                    if self._at_edge(x, y):
                         self.switch_to_android()
 
             time.sleep(self.poll_s)
