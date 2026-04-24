@@ -1,4 +1,4 @@
-name: Lint
+name: CI
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  ruff:
+  lint:
     name: ruff
     runs-on: ubuntu-latest
     steps:
@@ -19,3 +19,16 @@ jobs:
         run: pip install --upgrade ruff
       - name: Run ruff
         run: ruff check mouseferry
+
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pytest
+        run: pip install --upgrade pytest
+      - name: Run pytest
+        run: pytest tests/ -v
