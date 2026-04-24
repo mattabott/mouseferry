@@ -292,7 +292,7 @@ class MouseFerry:
     RETURN_WINDOW = 0.3
     RETURN_NET_THRESHOLD = 800
 
-    def __init__(self, config):
+    def __init__(self, config, cli_entries=None, cli_return=None):
         self.threshold = config.getint("general", "threshold", fallback=2)
         self.poll_s = config.getint("general", "poll_ms", fallback=50) / 1000.0
         self.serial = config.get("scrcpy", "serial", fallback="").strip()
@@ -322,24 +322,45 @@ class MouseFerry:
             sys.exit(1)
 
         cursor_pos = get_mouse_pos()
-        self.multi_entry = False  # set to True in Epic C when cli_entries is non-empty
+        self.multi_entry = bool(cli_entries)
+        fallback_reason = None  # used by startup print in single-entry mode
 
-        # Single-entry (v0.1.1) path: read edge + monitor from config.
-        monitor_spec = config.get("general", "monitor", fallback="primary").strip() or "primary"
-        target_mon, fallback_reason = resolve_target(
-            self.monitors, monitor_spec, cursor_pos
-        )
-        edge = config.get("general", "edge", fallback="left").strip() or "left"
-        if edge not in ("left", "right"):
-            print(f"[{APP_NAME}] ERROR: invalid edge '{edge}' in config "
-                  f"(single-entry mode supports only 'left' or 'right'; "
-                  f"use --entry for 'top'/'bottom').")
-            sys.exit(1)
-        self.entries = [Entry(target_mon, edge)]
-        self.return_mon = target_mon
+        if self.multi_entry:
+            # Multi-entry (v0.2+): --entry pairs come from CLI.
+            self.entries = []
+            self._entry_warnings = []  # collected for startup print after mouse is ready
+            for raw in cli_entries:
+                spec, direction = parse_entry_spec(raw)
+                mon, reason = resolve_target(self.monitors, spec, cursor_pos)
+                if reason:
+                    self._entry_warnings.append(f"entry '{raw}': {reason}")
+                self.entries.append(Entry(mon, direction))
+
+            if cli_return:
+                rmon, rreason = resolve_target(self.monitors, cli_return, cursor_pos)
+                if rreason:
+                    self._entry_warnings.append(f"return '{cli_return}': {rreason}")
+                self.return_mon = rmon
+            else:
+                self.return_mon = self.entries[0].monitor
+        else:
+            # Single-entry (v0.1.1) path: read edge + monitor from config.
+            self._entry_warnings = []
+            monitor_spec = config.get("general", "monitor", fallback="primary").strip() or "primary"
+            target_mon, fallback_reason = resolve_target(
+                self.monitors, monitor_spec, cursor_pos
+            )
+            edge = config.get("general", "edge", fallback="left").strip() or "left"
+            if edge not in ("left", "right"):
+                print(f"[{APP_NAME}] ERROR: invalid edge '{edge}' in config "
+                      f"(single-entry mode supports only 'left' or 'right'; "
+                      f"use --entry for 'top'/'bottom').")
+                sys.exit(1)
+            self.entries = [Entry(target_mon, edge)]
+            self.return_mon = target_mon
 
         self._active_entry = None
-        self._return_axis = None  # set at switch_to_android time
+        self._return_axis = None
 
         self.android_w, self.android_h = get_android_screen(self.serial)
 
@@ -358,17 +379,33 @@ class MouseFerry:
             for m in self.monitors
         )
         print(f"[{APP_NAME}] Monitors detected: {detected}")
+        for w in self._entry_warnings:
+            print(f"[{APP_NAME}] WARNING: {w}")
         if fallback_reason:
             print(f"[{APP_NAME}] WARNING: {fallback_reason}")
-        e = self.entries[0]
-        t = e.monitor
-        print(f"[{APP_NAME}] Target monitor: {t.name} ({t.w}x{t.h}+{t.x}+{t.y})")
-        print(f"[{APP_NAME}] Android: {self.android_w}x{self.android_h}")
-        print(f"[{APP_NAME}] Edge:    {e.direction}")
-        print(f"[{APP_NAME}] Ready — move the mouse to the {e.direction} edge of {t.name} to ferry over.")
-        log(f"start mouse={dev.name} edge={e.direction} "
-            f"target={t.name} geom={t.w}x{t.h}+{t.x}+{t.y} "
-            f"android={self.android_w}x{self.android_h} fallback={fallback_reason or 'none'}")
+
+        if self.multi_entry:
+            print(f"[{APP_NAME}] Entries:")
+            for e in self.entries:
+                m = e.monitor
+                print(f"  - {m.name} ({e.direction})")
+            r = self.return_mon
+            print(f"[{APP_NAME}] Return: {r.name}")
+            print(f"[{APP_NAME}] Android: {self.android_w}x{self.android_h}")
+            print(f"[{APP_NAME}] Ready — ferry triggers from any configured edge.")
+            log(f"start mouse={dev.name} mode=multi "
+                f"entries={[(e.monitor.name, e.direction) for e in self.entries]} "
+                f"return={r.name} android={self.android_w}x{self.android_h}")
+        else:
+            e = self.entries[0]
+            t = e.monitor
+            print(f"[{APP_NAME}] Target monitor: {t.name} ({t.w}x{t.h}+{t.x}+{t.y})")
+            print(f"[{APP_NAME}] Android: {self.android_w}x{self.android_h}")
+            print(f"[{APP_NAME}] Edge:    {e.direction}")
+            print(f"[{APP_NAME}] Ready — move the mouse to the {e.direction} edge of {t.name} to ferry over.")
+            log(f"start mouse={dev.name} edge={e.direction} "
+                f"target={t.name} geom={t.w}x{t.h}+{t.x}+{t.y} "
+                f"android={self.android_w}x{self.android_h} fallback={fallback_reason or 'none'}")
 
     def _build_cmd(self):
         cmd = ["scrcpy", f"--window-title={APP_NAME}",
@@ -500,16 +537,20 @@ class MouseFerry:
             except Exception:
                 pass
 
-        margin = 50
-        # Single-entry (v0.1.1): lateral warp on the entry's edge.
-        # Multi-entry branching is added in Epic C.
-        e = self.entries[0]
-        m = e.monitor
-        cy = m.y + m.h // 2
-        if e.direction == "left":
-            warp_mouse(m.x + margin, cy)
+        if self.multi_entry:
+            # Multi-entry: warp to center of return monitor (unambiguous, safe).
+            m = self.return_mon
+            warp_mouse(m.x + m.w // 2, m.y + m.h // 2)
         else:
-            warp_mouse(m.x + m.w - margin, cy)
+            # Single-entry (v0.1.1): lateral warp on the entry's edge.
+            margin = 50
+            e = self.entries[0]
+            m = e.monitor
+            cy = m.y + m.h // 2
+            if e.direction == "left":
+                warp_mouse(m.x + margin, cy)
+            else:
+                warp_mouse(m.x + m.w - margin, cy)
 
         self._active_entry = None
 
@@ -578,11 +619,13 @@ def main():
     import argparse
     epilog = """\
 examples:
-  mouseferry --left                              # use config defaults
-  mouseferry --right --monitor eDP-1             # override by xrandr name
-  mouseferry --right --monitor 1                 # override by 1-based index (see --list-monitors)
-  mouseferry --right --monitor auto-from-cursor  # pick monitor under cursor now
-  mouseferry --list-monitors                     # show what's available
+  mouseferry --left                                        # v0.1.1 single-entry from config
+  mouseferry --right --monitor eDP-1                       # v0.1.1 override by xrandr name
+  mouseferry --right --monitor 1                           # v0.1.1 override by 1-based index
+  mouseferry --right --monitor auto-from-cursor            # v0.1.1 monitor under cursor
+  mouseferry --entry primary:right --entry 3:bottom        # v0.2+ multi-entry
+  mouseferry --entry 1:right --entry 3:bottom --return 1   # v0.2+ explicit return
+  mouseferry --list-monitors                               # show what's available
 
 config file: ~/.config/mouseferry/config.ini
 docs:        https://github.com/mattabott/mouseferry
@@ -615,6 +658,17 @@ docs:        https://github.com/mattabott/mouseferry
                                 help="print connected monitors with geometry + primary marker, "
                                      "then exit")
 
+    multi = parser.add_argument_group(
+        "multi-entry (v0.2+, disables --left/--right/--monitor + config edge/monitor)")
+    multi.add_argument("--entry", metavar="SPEC", action="append", default=[],
+                       help="monitor:direction pair, repeatable. "
+                            "monitor: primary | auto-from-cursor | <xrandr-name> | <1-based index>. "
+                            "direction: left | right | top | bottom. "
+                            "Example: --entry primary:right --entry 3:bottom")
+    multi.add_argument("--return", metavar="MONITOR", dest="return_monitor", default=None,
+                       help="return monitor (default: first --entry's monitor). "
+                            "Accepts the same monitor values as --entry (without :direction).")
+
     args = parser.parse_args()
 
     if args.list_monitors:
@@ -633,16 +687,36 @@ docs:        https://github.com/mattabott/mouseferry
     config = configparser.ConfigParser()
     config.read(args.config)
 
-    # CLI flags override config
+    # CLI flags override config (single-entry mode only)
     if not config.has_section("general"):
         config.add_section("general")
-    if args.edge:
-        config.set("general", "edge", args.edge)
-    if args.monitor:
-        config.set("general", "monitor", args.monitor)
+
+    if args.entry:
+        # Multi-entry mode active: warn about legacy flags being ignored.
+        conflicts = []
+        if args.edge:
+            conflicts.append(f"--{args.edge}")
+        if args.monitor:
+            conflicts.append("--monitor")
+        if conflicts:
+            print(f"[{APP_NAME}] WARNING: {', '.join(conflicts)} "
+                  f"ignored because --entry is in use.")
+    else:
+        if args.edge:
+            config.set("general", "edge", args.edge)
+        if args.monitor:
+            config.set("general", "monitor", args.monitor)
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    MouseFerry(config).run()
+    try:
+        ferry = MouseFerry(config,
+                           cli_entries=(args.entry or None),
+                           cli_return=args.return_monitor)
+    except ValueError as e:
+        # parse_entry_spec raises ValueError on malformed --entry
+        print(f"[{APP_NAME}] ERROR: {e}")
+        sys.exit(2)
+    ferry.run()
 
 
 if __name__ == "__main__":
