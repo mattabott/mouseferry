@@ -28,6 +28,30 @@ from collections import namedtuple
 
 Monitor = namedtuple("Monitor", "name x y w h primary")
 
+Entry = namedtuple("Entry", "monitor direction")
+
+_VALID_DIRECTIONS = ("left", "right", "top", "bottom")
+
+
+def parse_entry_spec(raw):
+    """Parse a --entry CLI value like 'primary:right' into (spec, direction).
+
+    Raises ValueError with a user-facing message on malformed input.
+    """
+    if ":" not in raw:
+        raise ValueError(f"invalid entry '{raw}': expected MONITOR:DIRECTION "
+                         f"(e.g. primary:right)")
+    spec, direction = raw.rsplit(":", 1)
+    spec = spec.strip()
+    direction = direction.strip()
+    if not spec:
+        raise ValueError(f"invalid entry '{raw}': monitor spec is empty")
+    if direction not in _VALID_DIRECTIONS:
+        raise ValueError(f"invalid direction '{direction}' in entry '{raw}': "
+                         f"must be one of {'/'.join(_VALID_DIRECTIONS)}")
+    return spec, direction
+
+
 _LISTMONITORS_RE = re.compile(
     r"^\s*\d+:\s*\+(\*?)(\S+)\s+(\d+)/\d+x(\d+)/\d+\+(-?\d+)\+(-?\d+)"
 )

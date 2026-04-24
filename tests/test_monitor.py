@@ -196,3 +196,47 @@ def test_resolve_numeric_index_out_of_range_no_primary(three_mons):
     target, reason = mouseferry.resolve_target(no_primary, "99", (0, 0))
     assert target.name == "HDMI-1"
     assert "first available" in reason
+
+
+# --- parse_entry_spec ---
+
+def test_parse_entry_spec_primary_right():
+    assert mouseferry.parse_entry_spec("primary:right") == ("primary", "right")
+
+
+def test_parse_entry_spec_numeric_index():
+    assert mouseferry.parse_entry_spec("3:bottom") == ("3", "bottom")
+
+
+def test_parse_entry_spec_xrandr_name():
+    assert mouseferry.parse_entry_spec("eDP-1:top") == ("eDP-1", "top")
+
+
+def test_parse_entry_spec_auto_from_cursor():
+    assert mouseferry.parse_entry_spec("auto-from-cursor:left") == ("auto-from-cursor", "left")
+
+
+def test_parse_entry_spec_missing_colon_raises():
+    with pytest.raises(ValueError, match="expected MONITOR:DIRECTION"):
+        mouseferry.parse_entry_spec("primary")
+
+
+def test_parse_entry_spec_empty_spec_raises():
+    with pytest.raises(ValueError, match="monitor spec is empty"):
+        mouseferry.parse_entry_spec(":right")
+
+
+def test_parse_entry_spec_empty_direction_raises():
+    with pytest.raises(ValueError, match="must be one of left/right/top/bottom"):
+        mouseferry.parse_entry_spec("primary:")
+
+
+def test_parse_entry_spec_invalid_direction_raises():
+    with pytest.raises(ValueError, match="must be one of left/right/top/bottom"):
+        mouseferry.parse_entry_spec("primary:sideways")
+
+
+def test_entry_namedtuple_fields():
+    e = mouseferry.Entry(monitor=mouseferry.Monitor("X", 0, 0, 100, 100, True), direction="right")
+    assert e.monitor.name == "X"
+    assert e.direction == "right"
