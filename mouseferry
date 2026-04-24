@@ -674,6 +674,17 @@ docs:        https://github.com/mattabott/mouseferry
     if args.list_monitors:
         list_monitors_action()
 
+    # Pre-flight: validate --entry specs before any I/O (xrandr/evdev/adb/config).
+    # This gives users a clear error for malformed --entry even when DISPLAY is
+    # unset (CI, SSH, --entry typo before plugging in a display), instead of the
+    # less-helpful xrandr error that would otherwise fire first.
+    try:
+        for raw in args.entry:
+            parse_entry_spec(raw)
+    except ValueError as e:
+        print(f"[{APP_NAME}] ERROR: {e}")
+        sys.exit(2)
+
     for tool in ["xdotool", "scrcpy", "adb"]:
         if not shutil.which(tool):
             print(f"Error: '{tool}' not found in PATH.")
@@ -713,7 +724,10 @@ docs:        https://github.com/mattabott/mouseferry
                            cli_entries=(args.entry or None),
                            cli_return=args.return_monitor)
     except ValueError as e:
-        # parse_entry_spec raises ValueError on malformed --entry
+        # Defensive: --entry specs already validated in pre-flight above, so
+        # parse_entry_spec shouldn't raise here. Catches any future ValueError
+        # paths (e.g. resolve_target's "no monitors available", though that's
+        # currently shielded by the parse_xrandr empty-list guard in __init__).
         print(f"[{APP_NAME}] ERROR: {e}")
         sys.exit(2)
     ferry.run()
