@@ -240,3 +240,26 @@ def test_entry_namedtuple_fields():
     e = mouseferry.Entry(monitor=mouseferry.Monitor("X", 0, 0, 100, 100, True), direction="right")
     assert e.monitor.name == "X"
     assert e.direction == "right"
+
+
+# --- direction_return_config ---
+
+def test_direction_return_config_left():
+    assert mouseferry.direction_return_config("left") == ("X", +1)
+
+
+def test_direction_return_config_right():
+    assert mouseferry.direction_return_config("right") == ("X", -1)
+
+
+def test_direction_return_config_top():
+    assert mouseferry.direction_return_config("top") == ("Y", +1)
+
+
+def test_direction_return_config_bottom():
+    assert mouseferry.direction_return_config("bottom") == ("Y", -1)
+
+
+def test_direction_return_config_unknown_raises():
+    with pytest.raises(ValueError, match="unknown direction"):
+        mouseferry.direction_return_config("sideways")

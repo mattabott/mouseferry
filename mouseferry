@@ -52,6 +52,26 @@ def parse_entry_spec(raw):
     return spec, direction
 
 
+_DIRECTION_RETURN_CONFIG = {
+    "left":   ("X", +1),
+    "right":  ("X", -1),
+    "top":    ("Y", +1),
+    "bottom": ("Y", -1),
+}
+
+
+def direction_return_config(direction):
+    """Return (axis_letter, sign) for sweep-return detection from direction.
+
+    axis_letter is 'X' or 'Y'; caller maps to evdev.ecodes.REL_X / REL_Y at runtime.
+    sign is +1 when the return sweep moves in the positive direction along the axis,
+    -1 when negative.
+    """
+    if direction not in _DIRECTION_RETURN_CONFIG:
+        raise ValueError(f"unknown direction: {direction}")
+    return _DIRECTION_RETURN_CONFIG[direction]
+
+
 _LISTMONITORS_RE = re.compile(
     r"^\s*\d+:\s*\+(\*?)(\S+)\s+(\d+)/\d+x(\d+)/\d+\+(-?\d+)\+(-?\d+)"
 )
