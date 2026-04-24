@@ -77,6 +77,25 @@ def direction_return_config(direction):
     return _DIRECTION_RETURN_CONFIG[direction]
 
 
+def winning_entry(entries, sum_x, sum_y, threshold):
+    """Given accumulated REL_X and REL_Y sums over the return window, return
+    the first entry whose return condition (axis + sign + threshold) is met.
+
+    Iteration order matches the order entries were passed on the CLI — users
+    can influence tiebreaking when two axes win simultaneously by ordering
+    their --entry flags.
+
+    Returns (Entry, net_value). Returns (None, 0) if no entry wins.
+    """
+    for entry in entries:
+        axis_letter, sign = direction_return_config(entry.direction)
+        s = sum_x if axis_letter == "X" else sum_y
+        net = s * sign
+        if net >= threshold:
+            return entry, net
+    return None, 0
+
+
 def entry_matches(entry, x, y, threshold):
     """True if the cursor at (x, y) is at the configured edge of entry.monitor.
 
@@ -322,7 +341,9 @@ class MouseFerry:
         self._want_release = False
         self._track_active = False
         self._track_started = 0.0
-        self._recent_d = []
+        self._recent_x = []
+        self._recent_y = []
+        self._return_entry = None  # set by tracker when a sweep wins
 
         # Monitor snapshot: taken once at startup, used for edge detection.
         self.monitors = parse_xrandr()
@@ -347,16 +368,15 @@ class MouseFerry:
                 self.entries.append(Entry(mon, direction))
 
             if cli_return:
+                # Explicit override: always warp here regardless of sweep direction.
                 rmon, rreason = resolve_target(self.monitors, cli_return, cursor_pos)
                 if rreason:
                     self._entry_warnings.append(f"return '{cli_return}': {rreason}")
                 self.return_mon = rmon
             else:
-                # Default: X11 primary monitor — intuitive "return to main workspace".
-                rmon, rreason = resolve_target(self.monitors, "primary", cursor_pos)
-                if rreason:
-                    self._entry_warnings.append(f"return (default primary): {rreason}")
-                self.return_mon = rmon
+                # Dynamic: warp determined at return time by which sweep won.
+                # See winning_entry() + _release_to_desktop().
+                self.return_mon = None
         else:
             # Single-entry (v0.1.1) path: read edge + monitor from config.
             self._entry_warnings = []
@@ -403,13 +423,18 @@ class MouseFerry:
             for e in self.entries:
                 m = e.monitor
                 print(f"  - {m.name} ({e.direction})")
-            r = self.return_mon
-            print(f"[{APP_NAME}] Return: {r.name}")
+            if self.return_mon is not None:
+                print(f"[{APP_NAME}] Return: {self.return_mon.name} (fixed via --return)")
+                return_descr = self.return_mon.name
+            else:
+                print(f"[{APP_NAME}] Return: dynamic — depends on sweep direction")
+                return_descr = "dynamic"
             print(f"[{APP_NAME}] Android: {self.android_w}x{self.android_h}")
-            print(f"[{APP_NAME}] Ready — ferry triggers from any configured edge.")
+            print(f"[{APP_NAME}] Ready — ferry triggers from any configured edge; "
+                  f"sweep in the matching axis to return.")
             log(f"start mouse={dev.name} mode=multi "
                 f"entries={[(e.monitor.name, e.direction) for e in self.entries]} "
-                f"return={r.name} android={self.android_w}x{self.android_h}")
+                f"return={return_descr} android={self.android_w}x{self.android_h}")
         else:
             e = self.entries[0]
             t = e.monitor
@@ -486,19 +511,30 @@ class MouseFerry:
                         return
                     if not self._track_active:
                         continue
-                    if event.type == evdev.ecodes.EV_REL and event.code == self._return_axis:
-                        now = time.time()
-                        if now - self._track_started < self.CAPTURE_SETTLE:
-                            continue
-                        self._recent_d.append((now, event.value))
-                        cutoff = now - self.RETURN_WINDOW
-                        self._recent_d = [e for e in self._recent_d if e[0] > cutoff]
-                        # Net movement in the return direction
-                        net = sum(v for _, v in self._recent_d) * self._return_sign
-                        if net >= self.RETURN_NET_THRESHOLD:
-                            log(f"RETURN! net={net}")
-                            self._want_release = True
-                            self._track_active = False
+                    if event.type != evdev.ecodes.EV_REL:
+                        continue
+                    if event.code not in (evdev.ecodes.REL_X, evdev.ecodes.REL_Y):
+                        continue
+                    now = time.time()
+                    if now - self._track_started < self.CAPTURE_SETTLE:
+                        continue
+                    if event.code == evdev.ecodes.REL_X:
+                        self._recent_x.append((now, event.value))
+                    else:
+                        self._recent_y.append((now, event.value))
+                    cutoff = now - self.RETURN_WINDOW
+                    self._recent_x = [e for e in self._recent_x if e[0] > cutoff]
+                    self._recent_y = [e for e in self._recent_y if e[0] > cutoff]
+                    sum_x = sum(v for _, v in self._recent_x)
+                    sum_y = sum(v for _, v in self._recent_y)
+                    entry, net = winning_entry(
+                        self.entries, sum_x, sum_y, self.RETURN_NET_THRESHOLD
+                    )
+                    if entry:
+                        log(f"RETURN! entry={entry.monitor.name}:{entry.direction} net={net}")
+                        self._return_entry = entry
+                        self._want_release = True
+                        self._track_active = False
         except Exception as e:
             log(f"evdev error: {e}")
 
@@ -519,20 +555,18 @@ class MouseFerry:
         time.sleep(0.15)
 
         self._active_entry = entry
-        import evdev
-        axis_letter, sign = direction_return_config(entry.direction)
-        self._return_axis = (evdev.ecodes.REL_X if axis_letter == "X"
-                             else evdev.ecodes.REL_Y)
-        self._return_sign = sign
-
-        self._recent_d = []
+        # Reset both accumulators; the tracker watches all configured entries
+        # simultaneously and picks the winning one based on the sweep.
+        self._recent_x = []
+        self._recent_y = []
+        self._return_entry = None
         self._want_release = False
         self._track_started = time.time()
         self._track_active = True
 
         self.active = True
-        log("→ Android")
-        print(f"[{APP_NAME}] → Android")
+        log(f"→ Android (entry={entry.monitor.name}:{entry.direction})")
+        print(f"[{APP_NAME}] → Android (entered via {entry.monitor.name}:{entry.direction})")
 
     # -- Return to PC ---------------------------------------------------------
 
@@ -551,22 +585,37 @@ class MouseFerry:
             except Exception:
                 pass
 
-        if self.multi_entry:
-            # Multi-entry: warp to center of return monitor (unambiguous, safe).
-            m = self.return_mon
-            warp_mouse(m.x + m.w // 2, m.y + m.h // 2)
-        else:
-            # Single-entry (v0.1.1): lateral warp on the entry's edge.
-            margin = 50
-            e = self.entries[0]
-            m = e.monitor
-            cy = m.y + m.h // 2
-            if e.direction == "left":
-                warp_mouse(m.x + margin, cy)
+        margin = 50
+        if self.return_mon is not None:
+            # Explicit --return override (multi-entry) OR single-entry (v0.1.1 compat).
+            if self.multi_entry:
+                m = self.return_mon
+                warp_mouse(m.x + m.w // 2, m.y + m.h // 2)
             else:
-                warp_mouse(m.x + m.w - margin, cy)
+                e = self.entries[0]
+                m = e.monitor
+                cy = m.y + m.h // 2
+                if e.direction == "left":
+                    warp_mouse(m.x + margin, cy)
+                else:
+                    warp_mouse(m.x + m.w - margin, cy)
+        else:
+            # Dynamic multi-entry: warp to the winning entry's monitor, just
+            # inside the named edge (so the cursor "emerges" where it would have
+            # if it came back from the same edge it entered).
+            e = self._return_entry or self.entries[0]
+            m = e.monitor
+            if e.direction == "right":
+                warp_mouse(m.x + m.w - margin, m.y + m.h // 2)
+            elif e.direction == "left":
+                warp_mouse(m.x + margin, m.y + m.h // 2)
+            elif e.direction == "top":
+                warp_mouse(m.x + m.w // 2, m.y + margin)
+            elif e.direction == "bottom":
+                warp_mouse(m.x + m.w // 2, m.y + m.h - margin)
 
         self._active_entry = None
+        self._return_entry = None
 
         self.last_release = time.time()
         self._want_release = False
@@ -680,8 +729,11 @@ docs:        https://github.com/mattabott/mouseferry
                             "direction: left | right | top | bottom. "
                             "Example: --entry primary:right --entry 3:bottom")
     multi.add_argument("--return", metavar="MONITOR", dest="return_monitor", default=None,
-                       help="return monitor (default: primary). "
-                            "Accepts the same monitor values as --entry (without :direction).")
+                       help="fixed return monitor (overrides dynamic sweep-based return). "
+                            "Accepts the same monitor values as --entry (without :direction). "
+                            "Without this flag the cursor returns to the monitor matching your "
+                            "sweep direction — sweep left/right maps to entries with left/right "
+                            "directions, sweep up/down maps to entries with top/bottom.")
 
     args = parser.parse_args()
 

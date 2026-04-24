@@ -372,3 +372,65 @@ def test_entry_matches_top_miss_cursor_past_monitor(entry_on_mon_at_origin):
     entry = mouseferry.Entry(entry_on_mon_at_origin, "top")
     # Cursor above the monitor (Y negative, past the top edge)
     assert mouseferry.entry_matches(entry, 500, -100, 2) is False
+
+
+# --- winning_entry: dynamic return based on sweep direction ---
+
+@pytest.fixture
+def two_entries():
+    # Entry 1: laptop (primary monitor) — direction right (axis X, sign -1)
+    # Entry 2: monitor above-right — direction bottom (axis Y, sign -1)
+    lap = mouseferry.Monitor("laptop", 0, 1080, 1920, 1200, True)
+    hdmi = mouseferry.Monitor("hdmi", 1920, 0, 1920, 1080, False)
+    return [
+        mouseferry.Entry(lap, "right"),
+        mouseferry.Entry(hdmi, "bottom"),
+    ]
+
+
+def test_winning_entry_sweep_left_picks_right_entry(two_entries):
+    # sum_x = -900 (moving left) → for entry "right" (sign -1): net = 900
+    entry, net = mouseferry.winning_entry(two_entries, -900, 0, 800)
+    assert entry is two_entries[0]  # laptop:right
+    assert net == 900
+
+
+def test_winning_entry_sweep_up_picks_bottom_entry(two_entries):
+    # sum_y = -900 (moving up) → for entry "bottom" (sign -1): net = 900
+    entry, net = mouseferry.winning_entry(two_entries, 0, -900, 800)
+    assert entry is two_entries[1]  # hdmi:bottom
+    assert net == 900
+
+
+def test_winning_entry_both_axes_pick_first(two_entries):
+    # When both sweeps would win, iteration order breaks the tie.
+    entry, net = mouseferry.winning_entry(two_entries, -900, -900, 800)
+    assert entry is two_entries[0]  # first wins
+
+
+def test_winning_entry_below_threshold_returns_none(two_entries):
+    entry, net = mouseferry.winning_entry(two_entries, -500, -500, 800)
+    assert entry is None
+    assert net == 0
+
+
+def test_winning_entry_wrong_direction_no_match(two_entries):
+    # sum_x positive (moving right): for entry "right" (sign -1), net = -900 (below threshold)
+    # sum_y positive (moving down): for entry "bottom" (sign -1), net = -900 (below threshold)
+    entry, net = mouseferry.winning_entry(two_entries, +900, +900, 800)
+    assert entry is None
+
+
+def test_winning_entry_single_entry_x_axis():
+    m = mouseferry.Monitor("m", 0, 0, 1920, 1080, True)
+    entries = [mouseferry.Entry(m, "left")]  # sign +1
+    # sum_x = +900 (moving right, the sweep-back for "left" entry)
+    entry, net = mouseferry.winning_entry(entries, 900, 0, 800)
+    assert entry is entries[0]
+    assert net == 900
+
+
+def test_winning_entry_empty_entries():
+    entry, net = mouseferry.winning_entry([], -900, -900, 800)
+    assert entry is None
+    assert net == 0

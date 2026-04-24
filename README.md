@@ -191,7 +191,18 @@ The format for `--entry` is `MONITOR:DIRECTION`, where:
 - **MONITOR**: any value accepted by the `monitor` config key (`primary`, `auto-from-cursor`, xrandr name like `eDP-1`, or a 1-based index from `--list-monitors`).
 - **DIRECTION**: `left`, `right`, `top`, or `bottom`.
 
-The `--return` flag picks the monitor where the cursor lands on sweep-back. **Defaults to the X11 primary monitor** if omitted — override with `--return 2`, `--return eDP-1`, etc. if you want the cursor to return elsewhere.
+**Return behavior: dynamic by default.** The cursor returns based on which way you sweep:
+
+- **Sweep left or right** (horizontal) → matches the first entry with direction `left`/`right` → cursor warps to that monitor, just inside its left/right edge
+- **Sweep up or down** (vertical) → matches the first entry with direction `top`/`bottom` → cursor warps to that monitor, just inside its top/bottom edge
+
+So with `--entry 1:right --entry 2:bottom` you get both channels: sweep left returns to monitor 1 (right edge), sweep up returns to monitor 2 (bottom edge). You don't have to remember which entry triggered the ferry — the sweep direction decides.
+
+Pass `--return MONITOR` to **override** this and force a fixed return target (warp to center of that monitor regardless of sweep direction):
+
+```bash
+mouseferry --entry 1:right --entry 2:bottom --return 1   # always come back to monitor 1, center
+```
 
 **Multi-entry is CLI-only by design** — there's no config-file equivalent. The idea is that mobile setups change often and the CLI forces you to make the choice explicit at every launch. If you have recurring setups, use shell aliases:
 
