@@ -49,3 +49,35 @@ def test_parse_listmonitors_handles_negative_y():
 
 def test_parse_listmonitors_empty_input():
     assert mouseferry.parse_xrandr_listmonitors("") == []
+
+
+QUERY_SAMPLE = """\
+Screen 0: minimum 320 x 200, current 3840 x 2280, maximum 16384 x 16384
+eDP-1 connected primary 1920x1200+0+1080 (normal left inverted right x axis y axis) 344mm x 215mm
+   1920x1200     60.00*+
+HDMI-1 connected 1920x1080+0+0 (normal left inverted right x axis y axis) 477mm x 268mm
+   1920x1080     60.00*+
+DP-2 connected 1920x1080+1920+0 (normal left inverted right x axis y axis) 477mm x 268mm
+   1920x1080     60.00*+
+DP-3 disconnected (normal left inverted right x axis y axis)
+"""
+
+
+def test_parse_query_three_monitors():
+    mons = mouseferry.parse_xrandr_query(QUERY_SAMPLE)
+    assert len(mons) == 3
+    names = sorted(m.name for m in mons)
+    assert names == ["DP-2", "HDMI-1", "eDP-1"]
+    edp = next(m for m in mons if m.name == "eDP-1")
+    assert edp.primary is True
+    hdmi = next(m for m in mons if m.name == "HDMI-1")
+    assert hdmi.primary is False
+
+
+def test_parse_query_skips_disconnected():
+    mons = mouseferry.parse_xrandr_query(QUERY_SAMPLE)
+    assert not any(m.name == "DP-3" for m in mons)
+
+
+def test_parse_query_empty_input():
+    assert mouseferry.parse_xrandr_query("") == []
