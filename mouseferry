@@ -24,6 +24,29 @@ import threading
 import os
 import re
 import select
+from collections import namedtuple
+
+Monitor = namedtuple("Monitor", "name x y w h primary")
+
+_LISTMONITORS_RE = re.compile(
+    r"^\s*\d+:\s*\+(\*?)(\S+)\s+(\d+)/\d+x(\d+)/\d+\+(-?\d+)\+(-?\d+)"
+)
+
+
+def parse_xrandr_listmonitors(text):
+    """Parse `xrandr --listmonitors` output into a list of Monitor."""
+    monitors = []
+    for line in text.splitlines():
+        m = _LISTMONITORS_RE.match(line)
+        if m:
+            prim, name, w, h, x, y = m.groups()
+            monitors.append(Monitor(
+                name=name,
+                x=int(x), y=int(y),
+                w=int(w), h=int(h),
+                primary=(prim == "*"),
+            ))
+    return monitors
 
 APP_NAME = "mouseferry"
 CONFIG_DIR = os.path.expanduser(f"~/.config/{APP_NAME}")
