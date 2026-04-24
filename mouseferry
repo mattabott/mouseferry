@@ -78,17 +78,27 @@ def direction_return_config(direction):
 
 
 def entry_matches(entry, x, y, threshold):
-    """True if the cursor at (x, y) is at the configured edge of entry.monitor."""
+    """True if the cursor at (x, y) is at the configured edge of entry.monitor.
+
+    The cursor must be inside the monitor's bounding box on BOTH axes AND
+    within `threshold` pixels of the named edge. Without the full inside
+    check, directions like 'bottom' would match any cursor whose Y is past
+    the monitor's bottom edge — including cursors on adjacent monitors that
+    happen to share the perpendicular band.
+    """
     m = entry.monitor
     d = entry.direction
+    # Cursor must be inside the monitor's bounding box (both axes).
+    if not (m.x <= x < m.x + m.w and m.y <= y < m.y + m.h):
+        return False
     if d == "left":
-        return m.y <= y < m.y + m.h and x <= m.x + threshold
+        return x <= m.x + threshold
     if d == "right":
-        return m.y <= y < m.y + m.h and x >= m.x + m.w - threshold
+        return x >= m.x + m.w - threshold
     if d == "top":
-        return m.x <= x < m.x + m.w and y <= m.y + threshold
+        return y <= m.y + threshold
     if d == "bottom":
-        return m.x <= x < m.x + m.w and y >= m.y + m.h - threshold
+        return y >= m.y + m.h - threshold
     raise ValueError(f"unknown direction: {d}")
 
 

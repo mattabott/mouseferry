@@ -338,3 +338,37 @@ def test_entry_matches_threshold_inclusive_boundary(entry_on_mon_at_origin):
 
 def test_parse_entry_spec_strips_whitespace():
     assert mouseferry.parse_entry_spec(" primary : right ") == ("primary", "right")
+
+
+# --- entry_matches: cursor outside bounding box must NOT match ---
+# Regression: before the fix, directions only checked the perpendicular band
+# plus a one-sided inequality on the edge axis. A cursor far past the edge
+# (on an adjacent monitor that happened to share the perpendicular band)
+# would match as if it were ON that edge. Ships real-world bug spotted in
+# v0.2.0-rc where --entry DisplayPort-2:bottom matched on cursor over a
+# different monitor located below DisplayPort-2.
+
+
+def test_entry_matches_right_miss_cursor_past_monitor(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(entry_on_mon_at_origin, "right")
+    # Cursor 1000px past the monitor's right edge (on a hypothetical adjacent monitor)
+    assert mouseferry.entry_matches(entry, 3000, 500, 2) is False
+
+
+def test_entry_matches_left_miss_cursor_past_monitor(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(entry_on_mon_at_origin, "left")
+    # Cursor to the left of the monitor (negative X)
+    assert mouseferry.entry_matches(entry, -100, 500, 2) is False
+
+
+def test_entry_matches_bottom_miss_cursor_past_monitor(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(entry_on_mon_at_origin, "bottom")
+    # Cursor below the monitor (Y past m.y + m.h). This is the specific
+    # v0.2.0-rc bug: cursor on a monitor located below the target would match.
+    assert mouseferry.entry_matches(entry, 500, 3000, 2) is False
+
+
+def test_entry_matches_top_miss_cursor_past_monitor(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(entry_on_mon_at_origin, "top")
+    # Cursor above the monitor (Y negative, past the top edge)
+    assert mouseferry.entry_matches(entry, 500, -100, 2) is False
