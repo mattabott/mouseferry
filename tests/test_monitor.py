@@ -81,6 +81,17 @@ def test_parse_query_skips_disconnected():
     assert not any(m.name == "DP-3" for m in mons)
 
 
+QUERY_CONNECTED_NO_MODE = """\
+HDMI-2 connected (normal left inverted right x axis y axis)
+   1920x1080     60.00
+"""
+
+
+def test_parse_query_skips_connected_without_mode():
+    """A `connected` line without resolution (disabled output) must not produce a Monitor."""
+    assert mouseferry.parse_xrandr_query(QUERY_CONNECTED_NO_MODE) == []
+
+
 def test_parse_query_empty_input():
     assert mouseferry.parse_xrandr_query("") == []
 

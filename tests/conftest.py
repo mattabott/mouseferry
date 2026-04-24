@@ -1,5 +1,6 @@
 """Make the extension-less `mouseferry` script importable as a module."""
 import importlib.util
+import importlib.machinery
 import sys
 from pathlib import Path
 
