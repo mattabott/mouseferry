@@ -80,6 +80,39 @@ def parse_xrandr():
             monitors = parse_xrandr_query(out.stdout)
     return monitors
 
+
+def resolve_target(monitors, spec, cursor_pos):
+    """Pick the target monitor from a list based on spec.
+
+    Returns (Monitor, fallback_reason_or_None). Non-None reason means a
+    fallback happened and should be surfaced to the user.
+    """
+    if not monitors:
+        raise ValueError("no monitors available")
+
+    primary = next((m for m in monitors if m.primary), None)
+
+    if spec == "primary":
+        if primary:
+            return primary, None
+        return monitors[0], "no primary marker, using first available"
+
+    if spec == "auto-from-cursor":
+        cx, cy = cursor_pos
+        for m in monitors:
+            if m.x <= cx < m.x + m.w and m.y <= cy < m.y + m.h:
+                return m, None
+        if primary:
+            return primary, "cursor not over any monitor, using primary"
+        return monitors[0], "cursor not over any monitor, using first available"
+
+    target = next((m for m in monitors if m.name == spec), None)
+    if target:
+        return target, None
+    if primary:
+        return primary, f"monitor '{spec}' not connected, using primary"
+    return monitors[0], f"monitor '{spec}' not connected, using first available"
+
 APP_NAME = "mouseferry"
 CONFIG_DIR = os.path.expanduser(f"~/.config/{APP_NAME}")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.ini")
