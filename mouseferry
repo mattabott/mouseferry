@@ -492,7 +492,8 @@ def main():
     epilog = """\
 examples:
   mouseferry --left                              # use config defaults
-  mouseferry --right --monitor eDP-1             # explicit override
+  mouseferry --right --monitor eDP-1             # override by xrandr name
+  mouseferry --right --monitor 1                 # override by 1-based index (see --list-monitors)
   mouseferry --right --monitor auto-from-cursor  # pick monitor under cursor now
   mouseferry --list-monitors                     # show what's available
 
