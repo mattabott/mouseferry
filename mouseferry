@@ -448,17 +448,67 @@ class MouseFerry:
         print(f"\n[{APP_NAME}] Shutting down...")
 
 
+def list_monitors_action():
+    """Print connected monitors and exit. Does not require scrcpy/adb/evdev."""
+    monitors = parse_xrandr()
+    if not monitors:
+        print("No monitors detected (is X running and DISPLAY set?)")
+        sys.exit(1)
+    print("Connected monitors:")
+    for m in monitors:
+        marker = "   primary" if m.primary else ""
+        print(f"  {m.name:8} {m.w}x{m.h}+{m.x}+{m.y}{marker}")
+    print()
+    default_name = next((m.name for m in monitors if m.primary), monitors[0].name)
+    print("To target one of these in your config, set:")
+    print("  [general]")
+    print(f"  monitor = {default_name}")
+    sys.exit(0)
+
+
 def main():
     import argparse
+    epilog = """\
+examples:
+  mouseferry --left                              # use config defaults
+  mouseferry --right --monitor eDP-1             # explicit override
+  mouseferry --right --monitor auto-from-cursor  # pick monitor under cursor now
+  mouseferry --list-monitors                     # show what's available
+
+config file: ~/.config/mouseferry/config.ini
+docs:        https://github.com/mattabott/mouseferry
+"""
     parser = argparse.ArgumentParser(
-        description="mouseferry — seamless mouse sharing: Linux PC <-> Android via scrcpy")
-    parser.add_argument("--config", default=CONFIG_FILE,
-                        help="Path to config file (default: ~/.config/mouseferry/config.ini)")
-    parser.add_argument("--left", action="store_const", const="left", dest="edge",
-                        help="Android device is to the left of the PC")
-    parser.add_argument("--right", action="store_const", const="right", dest="edge",
-                        help="Android device is to the right of the PC")
+        prog="mouseferry",
+        description="mouseferry — seamless mouse sharing: Linux PC <-> Android via scrcpy",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=epilog,
+    )
+    parser.add_argument("--config", metavar="PATH", default=CONFIG_FILE,
+                        help="path to config file (default: ~/.config/mouseferry/config.ini)")
+
+    direction = parser.add_argument_group("direction (overrides config)")
+    direction_excl = direction.add_mutually_exclusive_group()
+    direction_excl.add_argument("--left", action="store_const", const="left", dest="edge",
+                                 help="Android device is to the left of the PC")
+    direction_excl.add_argument("--right", action="store_const", const="right", dest="edge",
+                                 help="Android device is to the right of the PC")
+
+    monitor = parser.add_argument_group("monitor (overrides config)")
+    monitor.add_argument("--monitor", metavar="SPEC", default=None,
+                         help="which monitor's edge counts as the trigger. "
+                              "Accepted: primary | auto-from-cursor | <xrandr output name> "
+                              "(e.g. eDP-1). Use --list-monitors to see what's connected.")
+
+    introspection = parser.add_argument_group("introspection")
+    introspection.add_argument("--list-monitors", action="store_true",
+                                help="print connected monitors with geometry + primary marker, "
+                                     "then exit")
+
     args = parser.parse_args()
+
+    if args.list_monitors:
+        list_monitors_action()
 
     for tool in ["xdotool", "scrcpy", "adb"]:
         if not shutil.which(tool):
@@ -473,11 +523,13 @@ def main():
     config = configparser.ConfigParser()
     config.read(args.config)
 
-    # CLI flag overrides config
+    # CLI flags override config
+    if not config.has_section("general"):
+        config.add_section("general")
     if args.edge:
-        if not config.has_section("general"):
-            config.add_section("general")
         config.set("general", "edge", args.edge)
+    if args.monitor:
+        config.set("general", "monitor", args.monitor)
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     MouseFerry(config).run()
