@@ -263,3 +263,62 @@ def test_direction_return_config_bottom():
 def test_direction_return_config_unknown_raises():
     with pytest.raises(ValueError, match="unknown direction"):
         mouseferry.direction_return_config("sideways")
+
+
+# --- entry_matches ---
+
+@pytest.fixture
+def entry_on_mon_at_origin():
+    # A Monitor anchored at origin with size 1920x1080
+    return mouseferry.Monitor("M", 0, 0, 1920, 1080, False)
+
+
+def test_entry_matches_right_hit(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="right")
+    # At the right edge (x = w - 1 with threshold=2), inside Y band
+    assert mouseferry.entry_matches(entry, 1919, 500, 2) is True
+
+
+def test_entry_matches_right_miss_outside_y_band(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="right")
+    # x at edge but y above the monitor -> miss
+    assert mouseferry.entry_matches(entry, 1919, -5, 2) is False
+
+
+def test_entry_matches_left_hit(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="left")
+    assert mouseferry.entry_matches(entry, 1, 500, 2) is True
+
+
+def test_entry_matches_left_miss_inside_monitor(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="left")
+    # x well inside the monitor -> miss
+    assert mouseferry.entry_matches(entry, 500, 500, 2) is False
+
+
+def test_entry_matches_top_hit(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="top")
+    assert mouseferry.entry_matches(entry, 500, 1, 2) is True
+
+
+def test_entry_matches_top_miss_outside_x_band(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="top")
+    # y at edge but x to the right of the monitor -> miss
+    assert mouseferry.entry_matches(entry, 3000, 1, 2) is False
+
+
+def test_entry_matches_bottom_hit(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="bottom")
+    assert mouseferry.entry_matches(entry, 500, 1079, 2) is True
+
+
+def test_entry_matches_bottom_miss_inside_monitor(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="bottom")
+    # y well inside the monitor -> miss
+    assert mouseferry.entry_matches(entry, 500, 500, 2) is False
+
+
+def test_entry_matches_unknown_direction_raises(entry_on_mon_at_origin):
+    entry = mouseferry.Entry(monitor=entry_on_mon_at_origin, direction="diagonal")
+    with pytest.raises(ValueError, match="unknown direction"):
+        mouseferry.entry_matches(entry, 0, 0, 2)

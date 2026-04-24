@@ -72,6 +72,21 @@ def direction_return_config(direction):
     return _DIRECTION_RETURN_CONFIG[direction]
 
 
+def entry_matches(entry, x, y, threshold):
+    """True if the cursor at (x, y) is at the configured edge of entry.monitor."""
+    m = entry.monitor
+    d = entry.direction
+    if d == "left":
+        return m.y <= y < m.y + m.h and x <= m.x + threshold
+    if d == "right":
+        return m.y <= y < m.y + m.h and x >= m.x + m.w - threshold
+    if d == "top":
+        return m.x <= x < m.x + m.w and y <= m.y + threshold
+    if d == "bottom":
+        return m.x <= x < m.x + m.w and y >= m.y + m.h - threshold
+    raise ValueError(f"unknown direction: {d}")
+
+
 _LISTMONITORS_RE = re.compile(
     r"^\s*\d+:\s*\+(\*?)(\S+)\s+(\d+)/\d+x(\d+)/\d+\+(-?\d+)\+(-?\d+)"
 )
