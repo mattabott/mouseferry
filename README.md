@@ -170,6 +170,45 @@ The edge check is 2D: the trigger only fires when the cursor is both at the conf
 
 **Hotplug:** the monitor layout is snapshotted at startup. If you plug or unplug a display while `mouseferry` is running, restart it to pick up the change.
 
+### Multi-entry mode (v0.2+)
+
+For setups where the Android device is adjacent to **more than one monitor at once** — for example a tablet wedged so it's reachable both from the right edge of your laptop AND from the bottom edge of a monitor above it — you can configure multiple entry edges, each with its own direction:
+
+```bash
+# Ferry triggers from the right edge of the primary OR the bottom edge of monitor 3.
+# Return always lands on the primary.
+mouseferry --entry primary:right --entry 3:bottom
+
+# Equivalent with indexes from --list-monitors:
+mouseferry --entry 1:right --entry 3:bottom --return 1
+
+# All four directions are supported in multi-entry mode:
+mouseferry --entry 1:right --entry 2:top --entry 3:bottom --return 1
+```
+
+The format for `--entry` is `MONITOR:DIRECTION`, where:
+
+- **MONITOR**: any value accepted by the `monitor` config key (`primary`, `auto-from-cursor`, xrandr name like `eDP-1`, or a 1-based index from `--list-monitors`).
+- **DIRECTION**: `left`, `right`, `top`, or `bottom`.
+
+The `--return` flag picks the monitor where the cursor lands on sweep-back. Defaults to the monitor of the first `--entry` if omitted.
+
+**Multi-entry is CLI-only by design** — there's no config-file equivalent. The idea is that mobile setups change often and the CLI forces you to make the choice explicit at every launch. If you have recurring setups, use shell aliases:
+
+```bash
+alias mf-office='mouseferry --entry 1:right --entry 3:bottom --return 1'
+alias mf-coffee='mouseferry --entry 1:right'
+```
+
+**When `--entry` is present:**
+
+- The `edge` and `monitor` keys in `config.ini` are ignored
+- The v0.1.1 flags `--left`, `--right`, `--monitor` are also ignored (a warning is printed if you passed any)
+- `top` and `bottom` become valid directions (they're only available via `--entry`, not in single-entry config mode)
+- On return, the cursor warps to the **center** of the `--return` monitor, rather than just off a lateral edge
+
+Run `mouseferry --help` for the full flag reference.
+
 ## How it works, under the hood
 
 1. A main thread polls `xdotool getmouselocation` every `poll_ms` milliseconds. When the X coordinate sits within `threshold` pixels of the configured edge, a scrcpy subprocess is launched with `--mouse=uhid --no-video --no-audio` and its window is focused via `xdotool windowactivate` — SDL grabs the pointer.
