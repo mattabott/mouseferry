@@ -352,7 +352,11 @@ class MouseFerry:
                     self._entry_warnings.append(f"return '{cli_return}': {rreason}")
                 self.return_mon = rmon
             else:
-                self.return_mon = self.entries[0].monitor
+                # Default: X11 primary monitor — intuitive "return to main workspace".
+                rmon, rreason = resolve_target(self.monitors, "primary", cursor_pos)
+                if rreason:
+                    self._entry_warnings.append(f"return (default primary): {rreason}")
+                self.return_mon = rmon
         else:
             # Single-entry (v0.1.1) path: read edge + monitor from config.
             self._entry_warnings = []
@@ -676,7 +680,7 @@ docs:        https://github.com/mattabott/mouseferry
                             "direction: left | right | top | bottom. "
                             "Example: --entry primary:right --entry 3:bottom")
     multi.add_argument("--return", metavar="MONITOR", dest="return_monitor", default=None,
-                       help="return monitor (default: first --entry's monitor). "
+                       help="return monitor (default: primary). "
                             "Accepts the same monitor values as --entry (without :direction).")
 
     args = parser.parse_args()

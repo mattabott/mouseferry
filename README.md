@@ -191,7 +191,7 @@ The format for `--entry` is `MONITOR:DIRECTION`, where:
 - **MONITOR**: any value accepted by the `monitor` config key (`primary`, `auto-from-cursor`, xrandr name like `eDP-1`, or a 1-based index from `--list-monitors`).
 - **DIRECTION**: `left`, `right`, `top`, or `bottom`.
 
-The `--return` flag picks the monitor where the cursor lands on sweep-back. Defaults to the monitor of the first `--entry` if omitted.
+The `--return` flag picks the monitor where the cursor lands on sweep-back. **Defaults to the X11 primary monitor** if omitted — override with `--return 2`, `--return eDP-1`, etc. if you want the cursor to return elsewhere.
 
 **Multi-entry is CLI-only by design** — there's no config-file equivalent. The idea is that mobile setups change often and the CLI forces you to make the choice explicit at every launch. If you have recurring setups, use shell aliases:
 

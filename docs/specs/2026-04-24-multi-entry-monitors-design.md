@@ -39,7 +39,7 @@ Concrete scenario from the user:
 | Where multi-entry is configured | CLI only (`--entry`, `--return`) | Config section (rejected by user), mutex config+CLI, profile system |
 | CLI format | `--entry MONITOR:DIRECTION`, repeatable | `--entries a:right,b:bottom` (awkward to script), two flags `--from --edge` (ambiguous with repetition) |
 | Separator inside `--entry` value | `:` | `=` (looks like assignment), `/` (path-like), `,` (list-like, collides) |
-| Default `--return` if omitted | Monitor of the first `--entry` | Require explicit `--return` (ergonomically bad), always primary (surprising) |
+| Default `--return` if omitted | X11 primary monitor | First `--entry`'s monitor (surprising when entries are ordered arbitrarily), require explicit `--return` (ergonomically bad) |
 | Legacy flag behavior (`--left`/`--right`/`--monitor`) when `--entry` is passed | Ignored with WARNING, not error | Hard error (breaks scripts migrating incrementally) |
 | Return warp target | Center of `return_mon` in multi; lateral (as v0.1.1) in single | Center always (changes v0.1.1 UX), lateral in multi (ambiguous which side) |
 | Return-detection axis | Per-active-entry (set at `switch_to_android`), stored on the class | Fixed per run (breaks if entries mix directions), inferred each tick (more state) |
@@ -56,7 +56,7 @@ multi-entry (v0.2+, disables --left/--right/--monitor + config edge/monitor):
                       monitor: primary | auto-from-cursor | <xrandr output name> | <1-based index>
                       direction: left | right | top | bottom
                       Example: --entry primary:right --entry 3:bottom
-  --return MONITOR    return monitor (default: first --entry's monitor)
+  --return MONITOR    return monitor (default: primary)
                       Accepts: primary | auto-from-cursor | <xrandr name> | <1-based index>
                       (direction is NOT part of --return's value.)
 ```
@@ -363,7 +363,7 @@ multi.add_argument("--entry", metavar="SPEC", action="append", default=[],
                         "direction: left | right | top | bottom. "
                         "Example: --entry primary:right --entry 3:bottom")
 multi.add_argument("--return", metavar="MONITOR", dest="return_monitor", default=None,
-                   help="return monitor (default: first --entry's monitor). "
+                   help="return monitor (default: primary). "
                         "Accepts the same monitor values as --entry (no :direction).")
 
 # ...existing list_monitors short-circuit...
@@ -417,7 +417,7 @@ Implementation is done when:
 2. **Multi-entry happy path:** `mouseferry --entry primary:right --entry 3:bottom` on the user's real 3-monitor setup triggers the ferry both from the right edge of the primary AND from the bottom edge of monitor 3, and each return lands in the center of the primary monitor.
 3. **Return axis switching:** when the ferry was triggered from a `top`/`bottom` entry, a vertical sweep of the mouse returns control (not a horizontal one).
 4. **Fallback per entry:** `--entry HDMI-99:right` (nonexistent) prints a WARNING and falls back to primary for that entry; other entries are unaffected.
-5. **Default `--return`:** omitting `--return` uses the first `--entry`'s monitor; specifying `--return N` overrides.
+5. **Default `--return`:** omitting `--return` uses the X11 primary monitor (so the cursor lands on the user's main workspace by default); specifying `--return N` overrides.
 6. **Legacy flag warning:** `mouseferry --right --entry primary:right` prints a single WARNING line listing `--right` as ignored.
 7. **Validation error:** `mouseferry --entry primary:sideways` exits with a clear error mentioning the four valid directions.
 8. **`--help` documented:** the four argument groups (`direction`, `monitor`, `introspection`, `multi-entry`) are all present and the epilog includes at least one multi-entry example.
