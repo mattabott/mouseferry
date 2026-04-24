@@ -124,6 +124,44 @@ extra_args =
 
 Tweak `return_sensitivity` if you find the cursor bounces back by accident (raise it) or if the return feels too stiff (lower it).
 
+## Multi-monitor setups
+
+By default `mouseferry` binds the trigger to the **X11 primary monitor**. In a single-monitor setup that's exactly what you want. In a multi-monitor setup it means the trigger fires from the edge of whichever display `xrandr` reports as `primary`, regardless of where that display sits in your virtual desktop.
+
+If the primary is not the monitor next to your Android device, change the target:
+
+```bash
+# See what's connected
+mouseferry --list-monitors
+
+# Pick a specific output
+mouseferry --right --monitor eDP-1
+
+# Or snapshot whichever monitor the cursor is on right now
+mouseferry --right --monitor auto-from-cursor
+```
+
+You can also set it permanently in `~/.config/mouseferry/config.ini`:
+
+```ini
+[general]
+monitor = eDP-1
+```
+
+Values:
+
+| Value | Meaning |
+|---|---|
+| `primary` *(default)* | The monitor marked `primary` in `xrandr`. Change it with `xrandr --output <name> --primary`. |
+| `auto-from-cursor` | Whichever monitor the cursor is on at startup. Position the mouse on the target monitor, then launch. |
+| `<output-name>` | Exact xrandr output name (e.g. `eDP-1`, `HDMI-1`, `DP-2`). Stable across sessions for the same hardware. |
+
+The edge check is 2D: the trigger only fires when the cursor is both at the configured edge and inside the target monitor's vertical band. This prevents false positives when the cursor wanders onto a monitor stacked above or below.
+
+**Fallback:** if the monitor name you set is not connected (e.g. you undocked), `mouseferry` prints a warning and falls back to `primary`, then to the first available monitor. It keeps working.
+
+**Hotplug:** the monitor layout is snapshotted at startup. If you plug or unplug a display while `mouseferry` is running, restart it to pick up the change.
+
 ## How it works, under the hood
 
 1. A main thread polls `xdotool getmouselocation` every `poll_ms` milliseconds. When the X coordinate sits within `threshold` pixels of the configured edge, a scrcpy subprocess is launched with `--mouse=uhid --no-video --no-audio` and its window is focused via `xdotool windowactivate` — SDL grabs the pointer.
