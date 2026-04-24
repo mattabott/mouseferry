@@ -293,7 +293,6 @@ class MouseFerry:
     RETURN_NET_THRESHOLD = 800
 
     def __init__(self, config):
-        self.edge = config.get("general", "edge", fallback="left")
         self.threshold = config.getint("general", "threshold", fallback=2)
         self.poll_s = config.getint("general", "poll_ms", fallback=50) / 1000.0
         self.serial = config.get("scrcpy", "serial", fallback="").strip()
@@ -313,9 +312,7 @@ class MouseFerry:
         self._want_release = False
         self._track_active = False
         self._track_started = 0.0
-        self._recent_dx = []
-        # Return direction: +1 = rightward (tablet on left), -1 = leftward (tablet on right)
-        self._return_sign = 1 if self.edge == "left" else -1
+        self._recent_d = []
 
         # Monitor snapshot: taken once at startup, used for edge detection.
         self.monitors = parse_xrandr()
@@ -324,11 +321,25 @@ class MouseFerry:
                   f"mouseferry requires a running X session.")
             sys.exit(1)
 
-        monitor_spec = config.get("general", "monitor", fallback="primary").strip() or "primary"
         cursor_pos = get_mouse_pos()
-        self.target_mon, fallback_reason = resolve_target(
+        self.multi_entry = False  # set to True in Epic C when cli_entries is non-empty
+
+        # Single-entry (v0.1.1) path: read edge + monitor from config.
+        monitor_spec = config.get("general", "monitor", fallback="primary").strip() or "primary"
+        target_mon, fallback_reason = resolve_target(
             self.monitors, monitor_spec, cursor_pos
         )
+        edge = config.get("general", "edge", fallback="left").strip() or "left"
+        if edge not in ("left", "right"):
+            print(f"[{APP_NAME}] ERROR: invalid edge '{edge}' in config "
+                  f"(single-entry mode supports only 'left' or 'right'; "
+                  f"use --entry for 'top'/'bottom').")
+            sys.exit(1)
+        self.entries = [Entry(target_mon, edge)]
+        self.return_mon = target_mon
+
+        self._active_entry = None
+        self._return_axis = None  # set at switch_to_android time
 
         self.android_w, self.android_h = get_android_screen(self.serial)
 
@@ -349,12 +360,13 @@ class MouseFerry:
         print(f"[{APP_NAME}] Monitors detected: {detected}")
         if fallback_reason:
             print(f"[{APP_NAME}] WARNING: {fallback_reason}")
-        t = self.target_mon
+        e = self.entries[0]
+        t = e.monitor
         print(f"[{APP_NAME}] Target monitor: {t.name} ({t.w}x{t.h}+{t.x}+{t.y})")
         print(f"[{APP_NAME}] Android: {self.android_w}x{self.android_h}")
-        print(f"[{APP_NAME}] Edge:    {self.edge}")
-        print(f"[{APP_NAME}] Ready — move the mouse to the {self.edge} edge of {t.name} to ferry over.")
-        log(f"start mouse={dev.name} edge={self.edge} "
+        print(f"[{APP_NAME}] Edge:    {e.direction}")
+        print(f"[{APP_NAME}] Ready — move the mouse to the {e.direction} edge of {t.name} to ferry over.")
+        log(f"start mouse={dev.name} edge={e.direction} "
             f"target={t.name} geom={t.w}x{t.h}+{t.x}+{t.y} "
             f"android={self.android_w}x{self.android_h} fallback={fallback_reason or 'none'}")
 
@@ -368,14 +380,12 @@ class MouseFerry:
         cmd += [a for a in self.extra_args if a]
         return cmd
 
-    def _at_edge(self, x, y):
-        m = self.target_mon
-        # Y must be inside the target monitor's vertical band
-        if not (m.y <= y < m.y + m.h):
-            return False
-        if self.edge == "left":
-            return x <= m.x + self.threshold
-        return x >= m.x + m.w - self.threshold
+    def _edge_match(self, x, y):
+        """Return the matching Entry if (x, y) is at any entry's edge, else None."""
+        for entry in self.entries:
+            if entry_matches(entry, x, y, self.threshold):
+                return entry
+        return None
 
     # -- scrcpy (start/kill per session) -------------------------------------
 
@@ -425,15 +435,15 @@ class MouseFerry:
                         return
                     if not self._track_active:
                         continue
-                    if event.type == evdev.ecodes.EV_REL and event.code == evdev.ecodes.REL_X:
+                    if event.type == evdev.ecodes.EV_REL and event.code == self._return_axis:
                         now = time.time()
                         if now - self._track_started < self.CAPTURE_SETTLE:
                             continue
-                        self._recent_dx.append((now, event.value))
+                        self._recent_d.append((now, event.value))
                         cutoff = now - self.RETURN_WINDOW
-                        self._recent_dx = [e for e in self._recent_dx if e[0] > cutoff]
+                        self._recent_d = [e for e in self._recent_d if e[0] > cutoff]
                         # Net movement in the return direction
-                        net = sum(v for _, v in self._recent_dx) * self._return_sign
+                        net = sum(v for _, v in self._recent_d) * self._return_sign
                         if net >= self.RETURN_NET_THRESHOLD:
                             log(f"RETURN! net={net}")
                             self._want_release = True
@@ -443,7 +453,7 @@ class MouseFerry:
 
     # -- Enter Android --------------------------------------------------------
 
-    def switch_to_android(self):
+    def switch_to_android(self, entry):
         if self.active:
             return
         self.prev_window = get_active_window()
@@ -457,7 +467,14 @@ class MouseFerry:
         run("xdotool", "windowactivate", self.scrcpy_wid)
         time.sleep(0.15)
 
-        self._recent_dx = []
+        self._active_entry = entry
+        import evdev
+        axis_letter, sign = direction_return_config(entry.direction)
+        self._return_axis = (evdev.ecodes.REL_X if axis_letter == "X"
+                             else evdev.ecodes.REL_Y)
+        self._return_sign = sign
+
+        self._recent_d = []
         self._want_release = False
         self._track_started = time.time()
         self._track_active = True
@@ -484,12 +501,17 @@ class MouseFerry:
                 pass
 
         margin = 50
-        m = self.target_mon
+        # Single-entry (v0.1.1): lateral warp on the entry's edge.
+        # Multi-entry branching is added in Epic C.
+        e = self.entries[0]
+        m = e.monitor
         cy = m.y + m.h // 2
-        if self.edge == "left":
+        if e.direction == "left":
             warp_mouse(m.x + margin, cy)
         else:
             warp_mouse(m.x + m.w - margin, cy)
+
+        self._active_entry = None
 
         self.last_release = time.time()
         self._want_release = False
@@ -510,8 +532,9 @@ class MouseFerry:
                 if (now - start_time > self.STARTUP_DELAY and
                         now - self.last_release > self.ENTRY_COOLDOWN):
                     x, y = get_mouse_pos()
-                    if self._at_edge(x, y):
-                        self.switch_to_android()
+                    entry = self._edge_match(x, y)
+                    if entry:
+                        self.switch_to_android(entry)
 
             time.sleep(self.poll_s)
 
